@@ -2,7 +2,8 @@
 
 import collections
 import enum
-from typing import List, Final, Mapping, Callable, MutableMapping
+import math
+from typing import List, Final, Mapping, Callable, MutableMapping, Tuple
 
 import cv2
 import numpy as np
@@ -193,3 +194,53 @@ def load_detector() -> Callable[[cv2.Mat], List[Detection]]:
         return detections
 
     return apply_model
+
+@require(
+    lambda hip, knee, ankle: hip[1] > ankle[1] and knee[1] > ankle[1],
+    "Coordinate origin in the bottom-left of the image, not in the top-left",
+)
+def compute_knee_angle(
+    hip: Tuple[float, float], knee: Tuple[float, float], ankle: Tuple[float, float]
+) -> float:
+    """
+    Compute the angle between the knee and the other two points.
+
+    Going right means the negative angle:
+    >>> round(compute_knee_angle((0, 2), (1, 1), (0, 0)))
+    -90
+
+    Squatting means smaller angle when going to the right:
+    >>> round(compute_knee_angle((0, 0.5), (1, 0.25), (0, 0)))
+    -28
+
+    Going left means the positive angle:
+    >>> round(compute_knee_angle((0, 2), (-1, 1), (0, 0)))
+    90
+
+    Squatting means smaller angle also to the left:
+    >>> round(compute_knee_angle((0, 0.5), (-1, 0.25), (0, 0)))
+    28
+
+    Going straight means 180:
+    >>> round(compute_knee_angle((0, 2), (0, 1), (0, 0)))
+    180
+
+    Some observations regarding the body pose:
+
+    * It seems that going left/right is indicated when the angle goes below 150 degrees.
+    * The bent of 120 degrees is already a stretch for the body.
+    * 90 degrees is almost impossible.
+    """
+    # See: https://stackoverflow.com/a/31334882/1600678
+    rads = math.atan2(hip[1] - knee[1], hip[0] - knee[0]) - math.atan2(
+        ankle[1] - knee[1], ankle[0] - knee[0]
+    )
+
+    degrees = rads / math.pi * 180.0
+    if degrees > 180:
+        # NOTE (mristin, 2023-02-26):
+        # We transform the angle so that we can simply compare the sign for
+        # the direction and the magnitude for the speed.
+        degrees = -(360 - degrees)
+
+    return degrees
