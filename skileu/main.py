@@ -134,6 +134,20 @@ class Obstacle:
         self.xy = xy
 
 
+def calculate_obstacle_bounding_box(obstacle: Obstacle) -> Tuple[int, int, int, int]:
+    """
+    Compute the bounding box of the obstacle based on its location.
+
+    In the world coordinates, (xmin, ymin, xmax, ymax).
+    """
+    return (
+        obstacle.xy[0],
+        obstacle.xy[1],
+        obstacle.xy[0] + obstacle.sprite.get_width(),
+        obstacle.xy[1] + obstacle.sprite.get_height()
+    )
+
+
 class Level:
     """Represent a single scene."""
     obstacles: List[Obstacle]
@@ -289,7 +303,23 @@ def skier_action_to_sprite(
     else:
         common.assert_never(action)
 
-def skier_bounding_box(
+
+def calculate_skier_xmin_ymin(
+        xy: Tuple[int, int],
+        skier_sprite: pygame.surface.Surface
+) -> Tuple[int, int]:
+    """
+    Calculate the skier corner.
+
+    In world coordinates.
+    """
+    return (
+        xy[0] - skier_sprite.get_width() // 2,
+        xy[1] - skier_sprite.get_height() // 2
+    )
+
+
+def calculate_skier_bounding_box(
         xy: Tuple[int, int],
         skier_sprite: pygame.surface.Surface
 ) -> Tuple[int, int, int, int]:
@@ -298,29 +328,12 @@ def skier_bounding_box(
     
     In world coordinates.
     """
-    sprite_height = skier_sprite.get_height()
-    sprite_width = skier_sprite.get_width()
-    
-    if sprite_height % 2 == 0:
-        ymin = xy[1] - sprite_height // 2 - 1
-        ymax = xy[1] + sprite_height // 2
-    else:
-        ymin = xy[1] - sprite_height // 2
-        ymax = xy[1] + sprite_height // 2
-        
-    assert ymax - ymin == sprite_height
+    xmin, ymin = calculate_skier_xmin_ymin(xy, skier_sprite)
 
-    if sprite_width % 2 == 0:
-        xmin = xy[0] - sprite_width // 2 - 1
-        xmax = xy[0] + sprite_width // 2
-    else:
-        xmin = xy[0] - sprite_width // 2
-        xmax = xy[0] + sprite_width // 2
-
-    assert xmax - xmin == sprite_width
+    xmax = xmin + skier_sprite.get_width()
+    ymax = ymin + skier_sprite.get_height()
 
     return xmin, ymin, xmax, ymax
-    
 
 
 class GameOverKind(enum.Enum):
@@ -404,21 +417,53 @@ def intersect(
             ymin_a <= ymax_b and ymax_a >= ymin_b
     )
 
+
+#: Velocity in world coordinates depending on action, (x, y)
+VELOCITY_DISPATCH = {
+    SkierAction.FORWARD: (0, 5),
+    SkierAction.LEFT: (-2, 3),
+    SkierAction.RIGHT: (2, 3)
+}
+assert all(action in VELOCITY_DISPATCH for action in SkierAction)
+
+
+@require(lambda state: state.game_over is None)
 def update_state_on_tick(state: State, now: float, media: Media) -> None:
     """Update state on one game cycle."""
     time_delta = now - state.now
-    
-    # region Check if the skier hit an obstacle
+    state.now = now
+
+    # region Check for collision(s) between obstacles and the skier
     skier_sprite = skier_action_to_sprite(state.skier.action, media)
-    
-    
-    
-    skier_xmin =  
-    
-    
+
+    skier_bbox = calculate_skier_bounding_box(state.skier.xy, skier_sprite)
+
+    collision = False
+    for obstacle in state.level.obstacles:
+        obstacle_bbox = calculate_obstacle_bounding_box(obstacle)
+
+        if intersect(
+                skier_bbox[0], skier_bbox[1], skier_bbox[2], skier_bbox[3],
+                obstacle_bbox[0], obstacle_bbox[1], obstacle_bbox[2], obstacle_bbox[3]
+        ):
+            collision = True
+            break
+
+    if collision:
+        state.game_over = GameOver(timestamp=now, kind=GameOverKind.CRASH)
+        return
     # endregion
-    
-    
+
+    # region Update skier
+    velocity = VELOCITY_DISPATCH[state.skier.action]
+
+    state.skier.xy = (
+        state.skier.xy[0] + velocity[0],
+        state.skier.xy[1] + velocity[1]
+    )
+    # endregion
+
+
 
 def main() -> int:
     """Execute the main routine."""
