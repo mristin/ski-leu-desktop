@@ -48,6 +48,15 @@ class Media:
         self.margin_sprites = margin_sprites
         self.font = font
 
+        self.mask_map = {
+            sprite: pygame.mask.from_surface(sprite)
+            for sprite in [
+                skier_forward_sprite,
+                skier_left_sprite,
+                skier_right_sprite,
+            ] + obstacle_sprites + margin_sprites
+        }
+
 
 SCENE_WIDTH = 800
 SCENE_HEIGHT = 600
@@ -202,7 +211,7 @@ def generate_level(media: Media) -> Level:
         obstacles.append(
             Obstacle(
                 sprite=sprite,
-                xy=(0, cursor + sprite.get_height())
+                xy=(0, cursor)
             )
         )
         cursor += sprite.get_height()
@@ -220,7 +229,7 @@ def generate_level(media: Media) -> Level:
         obstacles.append(
             Obstacle(
                 sprite=sprite,
-                xy=(SCENE_WIDTH - sprite.get_width(), cursor + sprite.get_height())
+                xy=(SCENE_WIDTH - sprite.get_width(), cursor)
             )
         )
         cursor += sprite.get_height()
@@ -260,7 +269,7 @@ def generate_level(media: Media) -> Level:
             if last_x is None:
                 x = margin_width + random.randint(0, skier_width)
             else:
-                x = last_x + random.randint(2 * skier_width, 5 * skier_width)
+                x = last_x + random.randint(2 * skier_width, 3 * skier_width)
 
             last_x = x
 
@@ -370,10 +379,19 @@ class GameOverCrash(GameOver):
     #: Obstacle that the skier had a collision with
     obstacle: Obstacle
 
-    def __init__(self, timestamp: float, obstacle: Obstacle) -> None:
+    #: Collision location, in world coordinates
+    collision_xy: Tuple[int, int]
+
+    def __init__(
+            self,
+            timestamp: float,
+            obstacle: Obstacle,
+            collision_xy: Tuple[int, int]
+    ) -> None:
         """Initialize with the given values."""
         GameOver.__init__(self, timestamp)
         self.obstacle = obstacle
+        self.collision_xy = collision_xy
 
 
 class State:
@@ -395,9 +413,9 @@ class State:
 
     skier: Skier
 
-    def __init__(self, game_start: float, media: Media) -> None:
+    def __init__(self, game_start: float, media: Media, level: Level) -> None:
         """Initialize with the given values and the defaults."""
-        initialize_state(self, game_start, media)
+        initialize_state(self, game_start, media, level=level)
 
 
 def calculate_initial_skier(media: Media) -> Skier:
@@ -409,7 +427,12 @@ def calculate_initial_skier(media: Media) -> Skier:
     )
 
 
-def initialize_state(state: State, game_start: float, media: Media) -> None:
+def initialize_state(
+        state: State,
+        game_start: float,
+        media: Media,
+        level: Level
+) -> None:
     """Initialize the state to the start one."""
     state.received_quit = False
     state.game_start = game_start
@@ -417,12 +440,12 @@ def initialize_state(state: State, game_start: float, media: Media) -> None:
     state.game_over = None
 
     state.level_id = 0
-    state.level = generate_level(media=media)
+    state.level = level
 
     state.skier = calculate_initial_skier(media)
 
 
-LEVEL_COUNT = 5
+LEVEL_COUNT = 10
 
 
 @require(lambda xmin_a, xmax_a: xmin_a <= xmax_a)
@@ -448,8 +471,8 @@ def intersect(
 #: Velocity in world coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
     SkierAction.FORWARD: (0, 50),
-    SkierAction.LEFT: (-30, 30),
-    SkierAction.RIGHT: (30, 30)
+    SkierAction.LEFT: (-40, 30),
+    SkierAction.RIGHT: (40, 30)
 }
 assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 
@@ -457,6 +480,7 @@ assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 def update_state_on_tick(state: State, now: float, media: Media) -> None:
     """Update state on one game cycle."""
     time_delta = now - state.now
+
     state.now = now
 
     if state.game_over is not None:
@@ -474,11 +498,48 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
                 skier_bbox[0], skier_bbox[1], skier_bbox[2], skier_bbox[3],
                 obstacle_bbox[0], obstacle_bbox[1], obstacle_bbox[2], obstacle_bbox[3]
         ):
-            state.game_over = GameOverCrash(
-                timestamp=now,
-                obstacle=obstacle
+            skier_mask = media.mask_map[skier_sprite]
+            obstacle_mask = media.mask_map[obstacle.sprite]
+
+            # NOTE (mristin, 2023-03-05):
+            # World coordinates start in bottom-left corner. Screen coordinates start in
+            # top-left.
+            #
+            # The mask offsets need to be computed in the screen coordinates.
+            # See: https://www.pygame.org/docs/ref/mask.html#mask-offset-label
+
+            skier_world_xmin, _, _, skier_world_ymax = skier_bbox
+            skier_screen_xy = world_xy_to_screen_xy(
+                (skier_world_xmin, skier_world_ymax)
             )
-            return
+
+            obstacle_world_xmin, _, _, obstacle_world_ymax = obstacle_bbox
+            obstacle_screen_xy = world_xy_to_screen_xy(
+                (obstacle_world_xmin, obstacle_world_ymax)
+            )
+
+            offset = (
+                obstacle_screen_xy[0] - skier_screen_xy[0],
+                obstacle_screen_xy[1] - skier_screen_xy[1]
+            )
+
+            collision_screen_xy = skier_mask.overlap(
+                obstacle_mask,
+                offset
+            )
+
+            if collision_screen_xy is not None:
+                state.game_over = GameOverCrash(
+                    timestamp=now,
+                    obstacle=obstacle,
+                    collision_xy=(
+                        collision_screen_xy[0] + skier_screen_xy[0],
+                        # NOTE (mristin, 2023-03-05):
+                        # We convert here screen to world coordinates.
+                        SCENE_HEIGHT - (collision_screen_xy[1] + skier_screen_xy[1])
+                    )
+                )
+                return
     # endregion
 
     # region Check for reaching the end of level
@@ -625,6 +686,13 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
         draw_skier_on_scene(scene, state.skier, media)
 
         draw_obstacle_on_scene(scene, state.game_over.obstacle)
+
+        pygame.draw.circle(
+            scene,
+            (255, 0, 0),
+            world_xy_to_screen_xy(state.game_over.collision_xy),
+            5
+        )
     else:
         common.assert_never(state.game_over)
 
@@ -739,14 +807,9 @@ def main(prog: str) -> int:
     # print("Loading the detector...")
     # detector = bodypose.load_detector()
 
-    now = pygame.time.get_ticks() / 1000
     clock = pygame.time.Clock()
 
-    print("Initializing the state...")
-    state = State(game_start=now, media=media)
-
-    print("Entering the endless loop...")
-
+    print("Opening the video capture...")
     try:
         cap = cv2.VideoCapture(0)
     except Exception as exception:
@@ -754,6 +817,12 @@ def main(prog: str) -> int:
         return 1
 
     try:
+        print("Initializing the state...")
+        level = generate_level(media)
+        now = pygame.time.get_ticks() / 1000
+        state = State(game_start=now, media=media, level=level)
+
+        print("Entering the endless loop...")
         while cap.isOpened() and not state.received_quit:
             now = pygame.time.get_ticks() / 1000
 
@@ -774,17 +843,25 @@ def main(prog: str) -> int:
                     continue
 
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                    state = State(game_start=now, media=media)
+                    level = generate_level(media)
+                    state = State(
+                        game_start=pygame.time.get_ticks() / 1000,
+                        media=media,
+                        level=level
+                    )
                     continue
 
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_UP:
-                    state.skier.action = SkierAction.FORWARD
+                    if state.game_over is None:
+                        state.skier.action = SkierAction.FORWARD
 
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
-                    state.skier.action = SkierAction.LEFT
+                    if state.game_over is None:
+                        state.skier.action = SkierAction.LEFT
 
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_RIGHT:
-                    state.skier.action = SkierAction.RIGHT
+                    if state.game_over is None:
+                        state.skier.action = SkierAction.RIGHT
 
                 else:
                     # Ignore events that we do not handle
