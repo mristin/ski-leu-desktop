@@ -17,7 +17,7 @@ import pygame.freetype
 from icontract import require, ensure
 
 import skileu
-from skileu import common
+from skileu import common, bodypose
 
 assert skileu.__doc__ == __doc__
 
@@ -32,13 +32,13 @@ class Media:
     """Represent all the media loaded in the main memory from the file system."""
 
     def __init__(
-            self,
-            skier_forward_sprite: pygame.surface.Surface,
-            skier_left_sprite: pygame.surface.Surface,
-            skier_right_sprite: pygame.surface.Surface,
-            obstacle_sprites: List[pygame.surface.Surface],
-            margin_sprites: List[pygame.surface.Surface],
-            font: pygame.freetype.Font,  # type: ignore
+        self,
+        skier_forward_sprite: pygame.surface.Surface,
+        skier_left_sprite: pygame.surface.Surface,
+        skier_right_sprite: pygame.surface.Surface,
+        obstacle_sprites: List[pygame.surface.Surface],
+        margin_sprites: List[pygame.surface.Surface],
+        font: pygame.freetype.Font,  # type: ignore
     ) -> None:
         """Initialize with the given values."""
         self.skier_forward_sprite = skier_forward_sprite
@@ -54,7 +54,9 @@ class Media:
                 skier_forward_sprite,
                 skier_left_sprite,
                 skier_right_sprite,
-            ] + obstacle_sprites + margin_sprites
+            ]
+            + obstacle_sprites
+            + margin_sprites
         }
 
 
@@ -117,29 +119,29 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
     except Exception as exception:
         return None, f"Failed to load {pth}: {exception}"
 
-    return Media(
-        skier_forward_sprite=skier_forward_sprite,
-        skier_left_sprite=skier_left_sprite,
-        skier_right_sprite=skier_right_sprite,
-        obstacle_sprites=obstacle_sprites,
-        margin_sprites=margin_sprites,
-        font=font
-    ), None
+    return (
+        Media(
+            skier_forward_sprite=skier_forward_sprite,
+            skier_left_sprite=skier_left_sprite,
+            skier_right_sprite=skier_right_sprite,
+            obstacle_sprites=obstacle_sprites,
+            margin_sprites=margin_sprites,
+            font=font,
+        ),
+        None,
+    )
 
 
 class Obstacle:
     """Represent an obstacle in the level."""
+
     #: Appearance
     sprite: pygame.surface.Surface
 
     #: Top-left corner, in world coordinates
     xy: Tuple[int, int]
 
-    def __init__(
-            self,
-            sprite: pygame.surface.Surface,
-            xy: Tuple[int, int]
-    ) -> None:
+    def __init__(self, sprite: pygame.surface.Surface, xy: Tuple[int, int]) -> None:
         """Initialize with the given values."""
         self.sprite = sprite
         self.xy = xy
@@ -155,12 +157,13 @@ def calculate_obstacle_bounding_box(obstacle: Obstacle) -> Tuple[int, int, int, 
         obstacle.xy[0],
         obstacle.xy[1],
         obstacle.xy[0] + obstacle.sprite.get_width(),
-        obstacle.xy[1] + obstacle.sprite.get_height()
+        obstacle.xy[1] + obstacle.sprite.get_height(),
     )
 
 
 class Level:
     """Represent a single scene."""
+
     obstacles: List[Obstacle]
 
     def __init__(self, obstacles: List[Obstacle]) -> None:
@@ -175,7 +178,7 @@ def calculate_skier_width(media: Media) -> int:
         for sprite in [
             media.skier_forward_sprite,
             media.skier_left_sprite,
-            media.skier_right_sprite
+            media.skier_right_sprite,
         ]
     )
 
@@ -187,7 +190,7 @@ def calculate_skier_height(media: Media) -> int:
         for sprite in [
             media.skier_forward_sprite,
             media.skier_left_sprite,
-            media.skier_right_sprite
+            media.skier_right_sprite,
         ]
     )
 
@@ -196,10 +199,7 @@ def generate_level(media: Media) -> Level:
     """Generate randomly a level."""
     obstacles = []  # type: List[Obstacle]
 
-    assert all(
-        sprite.get_height() > 0
-        for sprite in media.margin_sprites
-    ), (
+    assert all(sprite.get_height() > 0 for sprite in media.margin_sprites), (
         "All margin sprites at least 1 pixel tall "
         "so that we do not enter an endless loop"
     )
@@ -208,18 +208,12 @@ def generate_level(media: Media) -> Level:
     cursor = 0
     while cursor < SCENE_HEIGHT:
         sprite = random.choice(media.margin_sprites)
-        obstacles.append(
-            Obstacle(
-                sprite=sprite,
-                xy=(0, cursor)
-            )
-        )
+        obstacles.append(Obstacle(sprite=sprite, xy=(0, cursor)))
         cursor += sprite.get_height()
     # endregion
 
     margin_sprites_mirrored = [
-        pygame.transform.flip(sprite, True, False)
-        for sprite in media.margin_sprites
+        pygame.transform.flip(sprite, True, False) for sprite in media.margin_sprites
     ]
 
     # region Generate right margin
@@ -227,37 +221,25 @@ def generate_level(media: Media) -> Level:
     while cursor < SCENE_HEIGHT:
         sprite = random.choice(margin_sprites_mirrored)
         obstacles.append(
-            Obstacle(
-                sprite=sprite,
-                xy=(SCENE_WIDTH - sprite.get_width(), cursor)
-            )
+            Obstacle(sprite=sprite, xy=(SCENE_WIDTH - sprite.get_width(), cursor))
         )
         cursor += sprite.get_height()
     # endregion
 
     # region Generate obstacles
-    assert all(
-        sprite.get_height() > 0
-        for sprite in media.obstacle_sprites
-    ), (
+    assert all(sprite.get_height() > 0 for sprite in media.obstacle_sprites), (
         "All obstacle sprites at least 1 pixel tall "
         "so that we do not enter an endless loop"
     )
 
-    max_obstacle_height = max(
-        sprite.get_height()
-        for sprite in media.obstacle_sprites
-    )
+    max_obstacle_height = max(sprite.get_height() for sprite in media.obstacle_sprites)
 
     row_height = round(max_obstacle_height * 2.5)
     padding = round((row_height - max_obstacle_height) / 2)
 
     skier_width = calculate_skier_width(media)
 
-    margin_width = max(
-        sprite.get_width()
-        for sprite in media.margin_sprites
-    )
+    margin_width = max(sprite.get_width() for sprite in media.margin_sprites)
 
     # Skp the first row so that the player can get prepared
     cursor = 2 * calculate_skier_height(media)
@@ -281,12 +263,7 @@ def generate_level(media: Media) -> Level:
             if x + obstacle_sprite.get_width() >= SCENE_WIDTH - margin_width:
                 break
 
-            obstacles.append(
-                Obstacle(
-                    sprite=obstacle_sprite,
-                    xy=(x, y)
-                )
-            )
+            obstacles.append(Obstacle(sprite=obstacle_sprite, xy=(x, y)))
 
         cursor += row_height
     # endregion
@@ -296,6 +273,7 @@ def generate_level(media: Media) -> Level:
 
 class SkierAction(enum.Enum):
     """Represent the action of the skier."""
+
     FORWARD = 0
     LEFT = 1
     RIGHT = 2
@@ -315,10 +293,7 @@ class Skier:
         self.action = action
 
 
-def skier_action_to_sprite(
-        action: SkierAction,
-        media: Media
-) -> pygame.surface.Surface:
+def skier_action_to_sprite(action: SkierAction, media: Media) -> pygame.surface.Surface:
     """Determine the sprite corresponding to the skier action."""
     if action is SkierAction.LEFT:
         return media.skier_left_sprite
@@ -331,8 +306,7 @@ def skier_action_to_sprite(
 
 
 def calculate_skier_xmin_ymin(
-        xy: Tuple[int, int],
-        skier_sprite: pygame.surface.Surface
+    xy: Tuple[int, int], skier_sprite: pygame.surface.Surface
 ) -> Tuple[int, int]:
     """
     Calculate the skier corner.
@@ -341,17 +315,16 @@ def calculate_skier_xmin_ymin(
     """
     return (
         xy[0] - skier_sprite.get_width() // 2,
-        xy[1] - skier_sprite.get_height() // 2
+        xy[1] - skier_sprite.get_height() // 2,
     )
 
 
 def calculate_skier_bounding_box(
-        center_xy: Tuple[int, int],
-        skier_sprite: pygame.surface.Surface
+    center_xy: Tuple[int, int], skier_sprite: pygame.surface.Surface
 ) -> Tuple[int, int, int, int]:
     """
     Compute (xmin, ymin, xmax, ymax) based on the center (x, y).
-    
+
     In world coordinates.
     """
     xmin, ymin = calculate_skier_xmin_ymin(center_xy, skier_sprite)
@@ -364,6 +337,7 @@ def calculate_skier_bounding_box(
 
 class GameOver:
     """Capture how and when the game ended."""
+
     timestamp: float
 
     def __init__(self, timestamp: float) -> None:
@@ -383,10 +357,7 @@ class GameOverCrash(GameOver):
     collision_xy: Tuple[int, int]
 
     def __init__(
-            self,
-            timestamp: float,
-            obstacle: Obstacle,
-            collision_xy: Tuple[int, int]
+        self, timestamp: float, obstacle: Obstacle, collision_xy: Tuple[int, int]
     ) -> None:
         """Initialize with the given values."""
         GameOver.__init__(self, timestamp)
@@ -396,6 +367,7 @@ class GameOverCrash(GameOver):
 
 class State:
     """Represent the state of the game."""
+
     #: Set if we received the signal to quit the game
     received_quit: bool
 
@@ -418,20 +390,8 @@ class State:
         initialize_state(self, game_start, media, level=level)
 
 
-def calculate_initial_skier(media: Media) -> Skier:
-    """Calculate the initial skier state at the beginning of the level."""
-    skier_height = calculate_skier_height(media)
-    return Skier(
-        center_xy=(round(SCENE_WIDTH / 2), round(skier_height / 2)),
-        action=SkierAction.FORWARD
-    )
-
-
 def initialize_state(
-        state: State,
-        game_start: float,
-        media: Media,
-        level: Level
+    state: State, game_start: float, media: Media, level: Level
 ) -> None:
     """Initialize the state to the start one."""
     state.received_quit = False
@@ -442,7 +402,10 @@ def initialize_state(
     state.level_id = 0
     state.level = level
 
-    state.skier = calculate_initial_skier(media)
+    skier_height = calculate_skier_height(media)
+    state.skier = Skier(
+        center_xy=(round(SCENE_WIDTH / 2), -skier_height), action=SkierAction.FORWARD
+    )
 
 
 LEVEL_COUNT = 10
@@ -453,26 +416,26 @@ LEVEL_COUNT = 10
 @require(lambda xmin_b, xmax_b: xmin_b <= xmax_b)
 @require(lambda ymin_b, ymax_b: ymin_b <= ymax_b)
 def intersect(
-        xmin_a: Union[int, float],
-        ymin_a: Union[int, float],
-        xmax_a: Union[int, float],
-        ymax_a: Union[int, float],
-        xmin_b: Union[int, float],
-        ymin_b: Union[int, float],
-        xmax_b: Union[int, float],
-        ymax_b: Union[int, float],
+    xmin_a: Union[int, float],
+    ymin_a: Union[int, float],
+    xmax_a: Union[int, float],
+    ymax_a: Union[int, float],
+    xmin_b: Union[int, float],
+    ymin_b: Union[int, float],
+    xmax_b: Union[int, float],
+    ymax_b: Union[int, float],
 ) -> bool:
     """Return true if the two bounding boxes intersect."""
     return (xmin_a <= xmax_b and xmax_a >= xmin_b) and (
-            ymin_a <= ymax_b and ymax_a >= ymin_b
+        ymin_a <= ymax_b and ymax_a >= ymin_b
     )
 
 
 #: Velocity in world coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
     SkierAction.FORWARD: (0, 50),
-    SkierAction.LEFT: (-40, 30),
-    SkierAction.RIGHT: (40, 30)
+    SkierAction.LEFT: (-50, 30),
+    SkierAction.RIGHT: (50, 30),
 }
 assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 
@@ -495,8 +458,14 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
         obstacle_bbox = calculate_obstacle_bounding_box(obstacle)
 
         if intersect(
-                skier_bbox[0], skier_bbox[1], skier_bbox[2], skier_bbox[3],
-                obstacle_bbox[0], obstacle_bbox[1], obstacle_bbox[2], obstacle_bbox[3]
+            skier_bbox[0],
+            skier_bbox[1],
+            skier_bbox[2],
+            skier_bbox[3],
+            obstacle_bbox[0],
+            obstacle_bbox[1],
+            obstacle_bbox[2],
+            obstacle_bbox[3],
         ):
             skier_mask = media.mask_map[skier_sprite]
             obstacle_mask = media.mask_map[obstacle.sprite]
@@ -520,13 +489,10 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
 
             offset = (
                 obstacle_screen_xy[0] - skier_screen_xy[0],
-                obstacle_screen_xy[1] - skier_screen_xy[1]
+                obstacle_screen_xy[1] - skier_screen_xy[1],
             )
 
-            collision_screen_xy = skier_mask.overlap(
-                obstacle_mask,
-                offset
-            )
+            collision_screen_xy = skier_mask.overlap(obstacle_mask, offset)
 
             if collision_screen_xy is not None:
                 state.game_over = GameOverCrash(
@@ -536,8 +502,8 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
                         collision_screen_xy[0] + skier_screen_xy[0],
                         # NOTE (mristin, 2023-03-05):
                         # We convert here screen to world coordinates.
-                        SCENE_HEIGHT - (collision_screen_xy[1] + skier_screen_xy[1])
-                    )
+                        SCENE_HEIGHT - (collision_screen_xy[1] + skier_screen_xy[1]),
+                    ),
                 )
                 return
     # endregion
@@ -550,7 +516,10 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
         else:
             state.level_id += 1
             state.level = generate_level(media=media)
-            state.skier = calculate_initial_skier(media)
+
+            skier_height = calculate_skier_height(media)
+            state.skier.center_xy = (state.skier.center_xy[0], -skier_height)
+
         return
     # endregion
 
@@ -559,22 +528,100 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
 
     state.skier.center_xy = (
         state.skier.center_xy[0] + velocity[0] * time_delta,
-        state.skier.center_xy[1] + velocity[1] * time_delta
+        state.skier.center_xy[1] + velocity[1] * time_delta,
     )
     # endregion
 
 
-def world_xy_to_screen_xy(
-        xy: Tuple[int, int]
-) -> Tuple[int, int]:
+def cvmat_to_surface(image: cv2.Mat) -> pygame.surface.Surface:
+    """Convert from OpenCV to pygame."""
+    height, width, _ = image.shape
+    if height == 0 and width == 0:
+        return pygame.surface.Surface((1, 1))
+
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return pygame.image.frombuffer(image_rgb.tobytes(), (width, height), "RGB")
+
+
+def action_from_detection(
+    detection: bodypose.Detection, frame: cv2.Mat
+) -> Tuple[Optional[SkierAction], pygame.surface.Surface]:
+    """
+    Infer the action based on the body pose detection.
+
+    Return the action and the sprite showing it.
+    """
+    frame_height, frame_width, _ = frame.shape
+
+    left_hip = detection.keypoints.get(skileu.bodypose.KeypointLabel.LEFT_HIP, None)
+
+    right_hip = detection.keypoints.get(skileu.bodypose.KeypointLabel.RIGHT_HIP, None)
+
+    left_knee = detection.keypoints.get(skileu.bodypose.KeypointLabel.LEFT_KNEE, None)
+
+    right_knee = detection.keypoints.get(skileu.bodypose.KeypointLabel.RIGHT_KNEE, None)
+
+    left_ankle = detection.keypoints.get(skileu.bodypose.KeypointLabel.LEFT_ANKLE, None)
+
+    right_ankle = detection.keypoints.get(
+        skileu.bodypose.KeypointLabel.RIGHT_ANKLE, None
+    )
+
+    frame_with_wire = frame.copy()
+
+    action = None  # type: Optional[SkierAction]
+    if (
+        left_hip is not None
+        and right_hip is not None
+        and left_knee is not None
+        and right_knee is not None
+        and left_ankle is not None
+        and right_ankle is not None
+    ):
+        hip = (
+            round(frame_width * (left_hip.x + right_hip.x) / 2.0),
+            round(frame_height * (left_hip.y + right_hip.y) / 2.0),
+        )
+
+        knee = (
+            round(frame_width * (left_knee.x + right_knee.x) / 2.0),
+            round(frame_height * (left_knee.y + right_knee.y) / 2.0),
+        )
+
+        ankle = (
+            round(frame_width * (left_ankle.x + right_ankle.x) / 2.0),
+            round(frame_height * (left_ankle.y + right_ankle.y) / 2.0),
+        )
+
+        # region Draw the relevant keypoints
+        cv2.line(frame_with_wire, hip, knee, (255, 255, 255), 10)
+        cv2.line(frame_with_wire, knee, ankle, (255, 255, 255), 10)
+
+        cv2.circle(frame_with_wire, hip, 20, (255, 0, 0), -1)
+        cv2.circle(frame_with_wire, knee, 20, (0, 255, 0), -1)
+        cv2.circle(frame_with_wire, ankle, 20, (0, 0, 255), -1)
+        # endregion
+
+        action = SkierAction.FORWARD
+        if hip[1] < ankle[1] and knee[1] < ankle[1]:
+            angle = bodypose.compute_knee_angle(
+                (hip[0], frame_height - hip[1]),
+                (knee[0], frame_height - knee[1]),
+                (ankle[0], frame_height - ankle[1]),
+            )
+
+            if abs(angle) < 150:
+                action = SkierAction.RIGHT if angle < 0 else SkierAction.LEFT
+
+    return action, cvmat_to_surface(frame_with_wire)
+
+
+def world_xy_to_screen_xy(xy: Tuple[int, int]) -> Tuple[int, int]:
     """Convert the world coordinates to screen coordinates, as (x,y)."""
     return xy[0], SCENE_HEIGHT - xy[1]
 
 
-def draw_obstacle_on_scene(
-        scene: pygame.surface.Surface,
-        obstacle: Obstacle
-) -> None:
+def draw_obstacle_on_scene(scene: pygame.surface.Surface, obstacle: Obstacle) -> None:
     """Draw the obstacle on the scene."""
     # NOTE (mristin, 2023-03-05):
     # World coordinates start in bottom-left corner. Screen coordinates start in
@@ -588,21 +635,9 @@ def draw_obstacle_on_scene(
 
     scene.blit(obstacle.sprite, obstacle_screen_xy)
 
-    # TODO (mristin, 2023-03-5): rem
-    # pygame.draw.rect(
-    #     scene,
-    #     (255,0,0),
-    #     pygame.Rect(
-    #         obstacle_screen_xy,
-    #         obstacle.sprite.get_size()
-    #     )
-    # )
-
 
 def draw_skier_on_scene(
-        scene: pygame.surface.Surface,
-        skier: Skier,
-        media: Media
+    scene: pygame.surface.Surface, skier: Skier, media: Media
 ) -> None:
     """Draw the skier on the scene."""
     skier_sprite = skier_action_to_sprite(skier.action, media)
@@ -617,21 +652,10 @@ def draw_skier_on_scene(
 
     scene.blit(skier_sprite, skier_screen_xy)
 
-    # TODO (mristin, 2023-03-5): rem
-    # pygame.draw.rect(
-    #     scene,
-    #     (0, 0, 255),
-    #     pygame.Rect(
-    #         skier_screen_xy,
-    #         skier_sprite.get_size()
-    #     )
-    # )
-
 
 @require(lambda state: state.game_over is None)
 def render_in_game(
-        state: State,
-        media: Media
+    state: State, media: Media, frame_with_wire: pygame.surface.Surface
 ) -> pygame.surface.Surface:
     """Render the game screen based on the state."""
     scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
@@ -640,10 +664,13 @@ def render_in_game(
     for obstacle in state.level.obstacles:
         draw_obstacle_on_scene(scene, obstacle)
 
-    draw_skier_on_scene(
-        scene,
-        state.skier,
-        media
+    draw_skier_on_scene(scene, state.skier, media)
+
+    frame_with_wire_resized = pygame.surface.Surface((120, 120))
+    resize_image_to_canvas_and_blit(frame_with_wire, frame_with_wire_resized)
+    scene.blit(
+        frame_with_wire_resized,
+        (0, SCENE_HEIGHT - frame_with_wire_resized.get_height()),
     )
 
     media.font.render_to(
@@ -668,8 +695,7 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
         road_length = (state.level_id + 1) * SCENE_HEIGHT
         time_delta = state.game_over.timestamp - state.game_start
         average_velocity = road_length / time_delta
-        media.font.render_to(
-            scene, (20, 20), "You made it!", (0, 0, 0), size=16)
+        media.font.render_to(scene, (20, 20), "You made it!", (0, 0, 0), size=16)
 
         media.font.render_to(
             scene,
@@ -679,19 +705,14 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
             size=16,
         )
     elif isinstance(state.game_over, GameOverCrash):
-        media.font.render_to(
-            scene, (20, 20), "Game Over :'(", (0, 0, 0), size=16
-        )
+        media.font.render_to(scene, (20, 20), "Game Over :'(", (0, 0, 0), size=16)
 
         draw_skier_on_scene(scene, state.skier, media)
 
         draw_obstacle_on_scene(scene, state.game_over.obstacle)
 
         pygame.draw.circle(
-            scene,
-            (255, 0, 0),
-            world_xy_to_screen_xy(state.game_over.collision_xy),
-            5
+            scene, (255, 0, 0), world_xy_to_screen_xy(state.game_over.collision_xy), 5
         )
     else:
         common.assert_never(state.game_over)
@@ -718,7 +739,7 @@ def render_quit(media: Media) -> pygame.surface.Surface:
 
 
 def resize_image_to_canvas_and_blit(
-        image: pygame.surface.Surface, canvas: pygame.surface.Surface
+    image: pygame.surface.Surface, canvas: pygame.surface.Surface
 ) -> None:
     """Draw the image on canvas resizing it to maximum at constant aspect ratio."""
     canvas.fill((0, 0, 0))
@@ -783,9 +804,7 @@ def main(prog: str) -> int:
 
     pygame.display.set_caption("Ski Leu")
 
-    surface = pygame.display.set_mode((SCENE_WIDTH, SCENE_HEIGHT))
-    # TODO (mristin, 2023-03-5): undo
-    # surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 
     print("Loading the media...")
     try:
@@ -803,9 +822,8 @@ def main(prog: str) -> int:
         )
         return 1
 
-    # TODO (mristin, 2023-03-5): undo
-    # print("Loading the detector...")
-    # detector = bodypose.load_detector()
+    print("Loading the detector...")
+    detector = bodypose.load_detector()
 
     clock = pygame.time.Clock()
 
@@ -830,14 +848,31 @@ def main(prog: str) -> int:
             if not reading_ok:
                 break
 
+            # Flip so that it is easier to understand the image
+            frame = cv2.flip(frame, 1)
+
+            detections = detector(frame)
+
+            frame_with_wire = None  # type: Optional[pygame.surface.Surface]
+            if len(detections) > 0:
+                detection = detections[0]
+                maybe_action, frame_with_wire = action_from_detection(detection, frame)
+                if maybe_action is not None:
+                    state.skier.action = maybe_action
+
+            if frame_with_wire is None:
+                frame_with_wire = cvmat_to_surface(frame)
+
+            assert frame_with_wire is not None
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     state.received_quit = True
                     continue
 
                 elif event.type == pygame.KEYDOWN and event.key in (
-                        pygame.K_ESCAPE,
-                        pygame.K_q,
+                    pygame.K_ESCAPE,
+                    pygame.K_q,
                 ):
                     state.received_quit = True
                     continue
@@ -847,7 +882,7 @@ def main(prog: str) -> int:
                     state = State(
                         game_start=pygame.time.get_ticks() / 1000,
                         media=media,
-                        level=level
+                        level=level,
                     )
                     continue
 
@@ -874,7 +909,7 @@ def main(prog: str) -> int:
                 resize_image_to_canvas_and_blit(scene, surface)
                 pygame.display.flip()
             else:
-                scene = render_in_game(state, media)
+                scene = render_in_game(state, media, frame_with_wire)
                 resize_image_to_canvas_and_blit(scene, surface)
                 pygame.display.flip()
 

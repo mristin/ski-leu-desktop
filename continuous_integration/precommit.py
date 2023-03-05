@@ -132,11 +132,7 @@ def main() -> int:
 
     if Step.MYPY in selects and Step.MYPY not in skips:
         print("Mypy'ing...")
-        mypy_targets = [
-            "skileu",
-            "tests",
-            "continuous_integration"
-        ]
+        mypy_targets = ["skileu", "tests", "continuous_integration"]
         config_file = pathlib.Path("continuous_integration") / "mypy.ini"
 
         exit_code = call_and_report(

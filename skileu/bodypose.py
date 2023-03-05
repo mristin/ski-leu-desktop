@@ -195,6 +195,7 @@ def load_detector() -> Callable[[cv2.Mat], List[Detection]]:
 
     return apply_model
 
+
 @require(
     lambda hip, knee, ankle: hip[1] > ankle[1] and knee[1] > ankle[1],
     "Coordinate origin in the bottom-left of the image, not in the top-left",
