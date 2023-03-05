@@ -1,21 +1,23 @@
-"""Ski through the forest."""
+"""Ski through a dangerous forest."""
 
 import argparse
 import enum
+import fractions
 import importlib
 import os
 import pathlib
 import random
 import sys
+import time
 from typing import List, Tuple, Optional, Union
 
 import cv2
 import pygame
 import pygame.freetype
-from icontract import require, ensure, DBC
+from icontract import require, ensure
 
 import skileu
-from skileu import common, bodypose
+from skileu import common
 
 assert skileu.__doc__ == __doc__
 
@@ -121,7 +123,7 @@ class Obstacle:
     #: Appearance
     sprite: pygame.surface.Surface
 
-    #: In world coordinates
+    #: Top-left corner, in world coordinates
     xy: Tuple[int, int]
 
     def __init__(
@@ -185,19 +187,25 @@ def generate_level(media: Media) -> Level:
     """Generate randomly a level."""
     obstacles = []  # type: List[Obstacle]
 
+    assert all(
+        sprite.get_height() > 0
+        for sprite in media.margin_sprites
+    ), (
+        "All margin sprites at least 1 pixel tall "
+        "so that we do not enter an endless loop"
+    )
+
     # region Generate left margin
     cursor = 0
-    i = 0
     while cursor < SCENE_HEIGHT:
-        sprite = media.margin_sprites[i % len(media.margin_sprites)]
+        sprite = random.choice(media.margin_sprites)
         obstacles.append(
             Obstacle(
                 sprite=sprite,
-                xy=(0, cursor)
+                xy=(0, cursor + sprite.get_height())
             )
         )
         cursor += sprite.get_height()
-        i += 1
     # endregion
 
     margin_sprites_mirrored = [
@@ -207,26 +215,32 @@ def generate_level(media: Media) -> Level:
 
     # region Generate right margin
     cursor = 0
-    i = 0
     while cursor < SCENE_HEIGHT:
-        sprite = margin_sprites_mirrored[i % len(margin_sprites_mirrored)]
+        sprite = random.choice(margin_sprites_mirrored)
         obstacles.append(
             Obstacle(
                 sprite=sprite,
-                xy=(SCENE_WIDTH - sprite.get_width(), cursor)
+                xy=(SCENE_WIDTH - sprite.get_width(), cursor + sprite.get_height())
             )
         )
         cursor += sprite.get_height()
-        i += 1
     # endregion
 
     # region Generate obstacles
+    assert all(
+        sprite.get_height() > 0
+        for sprite in media.obstacle_sprites
+    ), (
+        "All obstacle sprites at least 1 pixel tall "
+        "so that we do not enter an endless loop"
+    )
+
     max_obstacle_height = max(
         sprite.get_height()
         for sprite in media.obstacle_sprites
     )
 
-    row_height = round(max_obstacle_height * 1.3)
+    row_height = round(max_obstacle_height * 2.5)
     padding = round((row_height - max_obstacle_height) / 2)
 
     skier_width = calculate_skier_width(media)
@@ -237,20 +251,21 @@ def generate_level(media: Media) -> Level:
     )
 
     # Skp the first row so that the player can get prepared
-    cursor = row_height
-    while cursor < SCENE_HEIGHT:
-        obstacle_count = random.randint(1, 4)
+    cursor = 2 * calculate_skier_height(media)
+    while cursor < SCENE_HEIGHT - max_obstacle_height:
         last_x = None  # type: Optional[int]
-        for _ in range(obstacle_count):
+        while True:
+            obstacle_sprite = random.choice(media.obstacle_sprites)
+
             if last_x is None:
-                x = margin_width + random.randint(0, 2 * skier_width)
+                x = margin_width + random.randint(0, skier_width)
             else:
-                x = last_x + random.randint(2 * skier_width, 4 * skier_width)
+                x = last_x + random.randint(2 * skier_width, 5 * skier_width)
+
+            last_x = x
 
             # Add some jitter to y to make the level more natural
-            y = cursor + random.randint(0, padding)
-
-            obstacle_sprite = random.choice(media.obstacle_sprites)
+            y = cursor + obstacle_sprite.get_height() + random.randint(0, padding)
 
             # We can not display this obstacle, so we are done for
             # the row.
@@ -259,10 +274,12 @@ def generate_level(media: Media) -> Level:
 
             obstacles.append(
                 Obstacle(
-                    sprite=random.choice(media.obstacle_sprites),
+                    sprite=obstacle_sprite,
                     xy=(x, y)
                 )
             )
+
+        cursor += row_height
     # endregion
 
     return Level(obstacles=obstacles)
@@ -279,13 +296,13 @@ class Skier:
     """Capture the state of the skier."""
 
     #: In world coordinates, center of the skier.
-    xy: Tuple[int, int]
+    center_xy: Tuple[int, int]
 
     action: SkierAction
 
-    def __init__(self, xy: Tuple[int, int], action: SkierAction) -> None:
+    def __init__(self, center_xy: Tuple[int, int], action: SkierAction) -> None:
         """Initialize with the given values."""
-        self.xy = xy
+        self.center_xy = center_xy
         self.action = action
 
 
@@ -297,7 +314,7 @@ def skier_action_to_sprite(
     if action is SkierAction.LEFT:
         return media.skier_left_sprite
     elif action is SkierAction.RIGHT:
-        return media.skier_left_sprite
+        return media.skier_right_sprite
     elif action is SkierAction.FORWARD:
         return media.skier_forward_sprite
     else:
@@ -320,7 +337,7 @@ def calculate_skier_xmin_ymin(
 
 
 def calculate_skier_bounding_box(
-        xy: Tuple[int, int],
+        center_xy: Tuple[int, int],
         skier_sprite: pygame.surface.Surface
 ) -> Tuple[int, int, int, int]:
     """
@@ -328,7 +345,7 @@ def calculate_skier_bounding_box(
     
     In world coordinates.
     """
-    xmin, ymin = calculate_skier_xmin_ymin(xy, skier_sprite)
+    xmin, ymin = calculate_skier_xmin_ymin(center_xy, skier_sprite)
 
     xmax = xmin + skier_sprite.get_width()
     ymax = ymin + skier_sprite.get_height()
@@ -336,22 +353,27 @@ def calculate_skier_bounding_box(
     return xmin, ymin, xmax, ymax
 
 
-class GameOverKind(enum.Enum):
-    """Capture how the game ended."""
-    SUCCESS = 0
-    CRASH = 1
-
-
 class GameOver:
     """Capture how and when the game ended."""
     timestamp: float
 
-    kind: GameOverKind
-
-    def __init__(self, timestamp: float, kind: GameOverKind) -> None:
+    def __init__(self, timestamp: float) -> None:
         """Initialize with the given values."""
         self.timestamp = timestamp
-        self.kind = kind
+
+
+class GameOverOk(GameOver):
+    """Represent a successful game."""
+
+
+class GameOverCrash(GameOver):
+    #: Obstacle that the skier had a collision with
+    obstacle: Obstacle
+
+    def __init__(self, timestamp: float, obstacle: Obstacle) -> None:
+        """Initialize with the given values."""
+        GameOver.__init__(self, timestamp)
+        self.obstacle = obstacle
 
 
 class State:
@@ -378,6 +400,15 @@ class State:
         initialize_state(self, game_start, media)
 
 
+def calculate_initial_skier(media: Media) -> Skier:
+    """Calculate the initial skier state at the beginning of the level."""
+    skier_height = calculate_skier_height(media)
+    return Skier(
+        center_xy=(round(SCENE_WIDTH / 2), round(skier_height / 2)),
+        action=SkierAction.FORWARD
+    )
+
+
 def initialize_state(state: State, game_start: float, media: Media) -> None:
     """Initialize the state to the start one."""
     state.received_quit = False
@@ -388,11 +419,7 @@ def initialize_state(state: State, game_start: float, media: Media) -> None:
     state.level_id = 0
     state.level = generate_level(media=media)
 
-    skier_height = calculate_skier_height(media)
-    state.skier = Skier(
-        xy=(round(SCENE_WIDTH / 2), round(skier_height / 2)),
-        action=SkierAction.FORWARD
-    )
+    state.skier = calculate_initial_skier(media)
 
 
 LEVEL_COUNT = 5
@@ -420,25 +447,26 @@ def intersect(
 
 #: Velocity in world coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
-    SkierAction.FORWARD: (0, 5),
-    SkierAction.LEFT: (-2, 3),
-    SkierAction.RIGHT: (2, 3)
+    SkierAction.FORWARD: (0, 50),
+    SkierAction.LEFT: (-30, 30),
+    SkierAction.RIGHT: (30, 30)
 }
 assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 
 
-@require(lambda state: state.game_over is None)
 def update_state_on_tick(state: State, now: float, media: Media) -> None:
     """Update state on one game cycle."""
     time_delta = now - state.now
     state.now = now
 
+    if state.game_over is not None:
+        return
+
     # region Check for collision(s) between obstacles and the skier
     skier_sprite = skier_action_to_sprite(state.skier.action, media)
 
-    skier_bbox = calculate_skier_bounding_box(state.skier.xy, skier_sprite)
+    skier_bbox = calculate_skier_bounding_box(state.skier.center_xy, skier_sprite)
 
-    collision = False
     for obstacle in state.level.obstacles:
         obstacle_bbox = calculate_obstacle_bounding_box(obstacle)
 
@@ -446,32 +474,356 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
                 skier_bbox[0], skier_bbox[1], skier_bbox[2], skier_bbox[3],
                 obstacle_bbox[0], obstacle_bbox[1], obstacle_bbox[2], obstacle_bbox[3]
         ):
-            collision = True
-            break
+            state.game_over = GameOverCrash(
+                timestamp=now,
+                obstacle=obstacle
+            )
+            return
+    # endregion
 
-    if collision:
-        state.game_over = GameOver(timestamp=now, kind=GameOverKind.CRASH)
+    # region Check for reaching the end of level
+    skier_ymax = skier_bbox[3]
+    if skier_ymax >= SCENE_HEIGHT:
+        if state.level_id == LEVEL_COUNT - 1:
+            state.game_over = GameOverOk(now)
+        else:
+            state.level_id += 1
+            state.level = generate_level(media=media)
+            state.skier = calculate_initial_skier(media)
         return
     # endregion
 
     # region Update skier
     velocity = VELOCITY_DISPATCH[state.skier.action]
 
-    state.skier.xy = (
-        state.skier.xy[0] + velocity[0],
-        state.skier.xy[1] + velocity[1]
+    state.skier.center_xy = (
+        state.skier.center_xy[0] + velocity[0] * time_delta,
+        state.skier.center_xy[1] + velocity[1] * time_delta
     )
     # endregion
 
 
+def world_xy_to_screen_xy(
+        xy: Tuple[int, int]
+) -> Tuple[int, int]:
+    """Convert the world coordinates to screen coordinates, as (x,y)."""
+    return xy[0], SCENE_HEIGHT - xy[1]
 
-def main() -> int:
-    """Execute the main routine."""
-    parser = argparse.ArgumentParser(description=__doc__)
+
+def draw_obstacle_on_scene(
+        scene: pygame.surface.Surface,
+        obstacle: Obstacle
+) -> None:
+    """Draw the obstacle on the scene."""
+    # NOTE (mristin, 2023-03-05):
+    # World coordinates start in bottom-left corner. Screen coordinates start in
+    # top-left.
+    obstacle_bbox = calculate_obstacle_bounding_box(obstacle)
+    obstacle_world_xmin, _, _, obstacle_world_ymax = obstacle_bbox
+
+    obstacle_screen_xy = world_xy_to_screen_xy(
+        (obstacle_world_xmin, obstacle_world_ymax)
+    )
+
+    scene.blit(obstacle.sprite, obstacle_screen_xy)
+
+    # TODO (mristin, 2023-03-5): rem
+    # pygame.draw.rect(
+    #     scene,
+    #     (255,0,0),
+    #     pygame.Rect(
+    #         obstacle_screen_xy,
+    #         obstacle.sprite.get_size()
+    #     )
+    # )
+
+
+def draw_skier_on_scene(
+        scene: pygame.surface.Surface,
+        skier: Skier,
+        media: Media
+) -> None:
+    """Draw the skier on the scene."""
+    skier_sprite = skier_action_to_sprite(skier.action, media)
+
+    # NOTE (mristin, 2023-03-05):
+    # World coordinates start in bottom-left corner. Screen coordinates start in
+    # top-left.
+    skier_bbox = calculate_skier_bounding_box(skier.center_xy, skier_sprite)
+    skier_world_xmin, _, _, skier_world_ymax = skier_bbox
+
+    skier_screen_xy = world_xy_to_screen_xy((skier_world_xmin, skier_world_ymax))
+
+    scene.blit(skier_sprite, skier_screen_xy)
+
+    # TODO (mristin, 2023-03-5): rem
+    # pygame.draw.rect(
+    #     scene,
+    #     (0, 0, 255),
+    #     pygame.Rect(
+    #         skier_screen_xy,
+    #         skier_sprite.get_size()
+    #     )
+    # )
+
+
+@require(lambda state: state.game_over is None)
+def render_in_game(
+        state: State,
+        media: Media
+) -> pygame.surface.Surface:
+    """Render the game screen based on the state."""
+    scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
+    scene.fill((255, 255, 255))
+
+    for obstacle in state.level.obstacles:
+        draw_obstacle_on_scene(scene, obstacle)
+
+    draw_skier_on_scene(
+        scene,
+        state.skier,
+        media
+    )
+
+    media.font.render_to(
+        scene,
+        (ROAD_MARGIN + 10, 10),
+        'Press "q" to quit and "r" to restart',
+        (0, 0, 0),
+        size=12,
+    )
+
+    return scene
+
+
+def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
+    """Render the "game over" dialogue as a scene."""
+    scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
+    scene.fill((255, 255, 255))
+
+    assert state.game_over is not None
+
+    if isinstance(state.game_over, GameOverOk):
+        road_length = (state.level_id + 1) * SCENE_HEIGHT
+        time_delta = state.game_over.timestamp - state.game_start
+        average_velocity = road_length / time_delta
+        media.font.render_to(
+            scene, (20, 20), "You made it!", (0, 0, 0), size=16)
+
+        media.font.render_to(
+            scene,
+            (20, 60),
+            f"Average velocity: {average_velocity:.1f} pixels / second",
+            (0, 0, 0),
+            size=16,
+        )
+    elif isinstance(state.game_over, GameOverCrash):
+        media.font.render_to(
+            scene, (20, 20), "Game Over :'(", (0, 0, 0), size=16
+        )
+
+        draw_skier_on_scene(scene, state.skier, media)
+
+        draw_obstacle_on_scene(scene, state.game_over.obstacle)
+    else:
+        common.assert_never(state.game_over)
+
+    media.font.render_to(
+        scene,
+        (20, SCENE_HEIGHT - 20),
+        'Press "q" to quit and "r" to restart',
+        (0, 0, 0),
+        size=10,
+    )
+
+    return scene
+
+
+def render_quit(media: Media) -> pygame.surface.Surface:
+    """Render the "Quitting..." dialogue as a scene."""
+    scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
+    scene.fill((0, 0, 0))
+
+    media.font.render_to(scene, (20, 20), "Quitting...", (255, 255, 255), size=32)
+
+    return scene
+
+
+def resize_image_to_canvas_and_blit(
+        image: pygame.surface.Surface, canvas: pygame.surface.Surface
+) -> None:
+    """Draw the image on canvas resizing it to maximum at constant aspect ratio."""
+    canvas.fill((0, 0, 0))
+
+    canvas_aspect_ratio = fractions.Fraction(canvas.get_width(), canvas.get_height())
+    image_aspect_ratio = fractions.Fraction(image.get_width(), image.get_height())
+
+    if image_aspect_ratio < canvas_aspect_ratio:
+        new_image_height = canvas.get_height()
+        new_image_width = image.get_width() * (new_image_height / image.get_height())
+
+        image = pygame.transform.scale(image, (new_image_width, new_image_height))
+
+        margin = int((canvas.get_width() - image.get_width()) / 2)
+
+        canvas.blit(image, (margin, 0))
+
+    elif image_aspect_ratio == canvas_aspect_ratio:
+        new_image_width = canvas.get_width()
+        new_image_height = image.get_height()
+
+        image = pygame.transform.scale(image, (new_image_width, new_image_height))
+
+        canvas.blit(image, (0, 0))
+    else:
+        new_image_width = canvas.get_width()
+        new_image_height = int(
+            image.get_height() * (new_image_width / image.get_width())
+        )
+
+        image = pygame.transform.scale(image, (new_image_width, new_image_height))
+
+        margin = int((canvas.get_height() - image.get_height()) / 2)
+
+        canvas.blit(image, (0, margin))
+
+
+def main(prog: str) -> int:
+    """
+    Execute the main routine.
+
+    :param prog: name of the program to be displayed in the help
+    :return: exit code
+    """
+    parser = argparse.ArgumentParser(prog=prog, description=__doc__)
+    parser.add_argument(
+        "--version", help="show the current version and exit", action="store_true"
+    )
+
+    # NOTE (mristin, 2022-12-16):
+    # The module ``argparse`` is not flexible enough to understand special options such
+    # as ``--version`` so we manually hard-wire.
+    if "--version" in sys.argv and "--help" not in sys.argv:
+        print(skileu.__version__)
+        return 0
+
     _ = parser.parse_args()
+
+    pygame.init()
+    pygame.mixer.pre_init()
+    pygame.mixer.init()
+
+    pygame.display.set_caption("Ski Leu")
+
+    surface = pygame.display.set_mode((SCENE_WIDTH, SCENE_HEIGHT))
+    # TODO (mristin, 2023-03-5): undo
+    # surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+
+    print("Loading the media...")
+    try:
+        media, error = load_media()
+
+        if error is not None:
+            print(f"Failed to load the media: {error}", file=sys.stderr)
+            return 1
+
+        assert media is not None
+    except Exception as exception:
+        print(
+            f"Failed to load the media: {exception.__class__.__name__} {exception}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # TODO (mristin, 2023-03-5): undo
+    # print("Loading the detector...")
+    # detector = bodypose.load_detector()
+
+    now = pygame.time.get_ticks() / 1000
+    clock = pygame.time.Clock()
+
+    print("Initializing the state...")
+    state = State(game_start=now, media=media)
+
+    print("Entering the endless loop...")
+
+    try:
+        cap = cv2.VideoCapture(0)
+    except Exception as exception:
+        print(f"Failed to open the video capture: {exception}", file=sys.stderr)
+        return 1
+
+    try:
+        while cap.isOpened() and not state.received_quit:
+            now = pygame.time.get_ticks() / 1000
+
+            reading_ok, frame = cap.read()
+            if not reading_ok:
+                break
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    state.received_quit = True
+                    continue
+
+                elif event.type == pygame.KEYDOWN and event.key in (
+                        pygame.K_ESCAPE,
+                        pygame.K_q,
+                ):
+                    state.received_quit = True
+                    continue
+
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                    state = State(game_start=now, media=media)
+                    continue
+
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_UP:
+                    state.skier.action = SkierAction.FORWARD
+
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
+                    state.skier.action = SkierAction.LEFT
+
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_RIGHT:
+                    state.skier.action = SkierAction.RIGHT
+
+                else:
+                    # Ignore events that we do not handle
+                    pass
+
+            update_state_on_tick(state, now, media)
+
+            if state.game_over is not None:
+                scene = render_game_over(state, media)
+                resize_image_to_canvas_and_blit(scene, surface)
+                pygame.display.flip()
+            else:
+                scene = render_in_game(state, media)
+                resize_image_to_canvas_and_blit(scene, surface)
+                pygame.display.flip()
+
+            # Enforce 30 frames per second
+            clock.tick(30)
+    finally:
+        print("Quitting the game...")
+        tic = time.time()
+
+        scene = render_quit(media)
+        resize_image_to_canvas_and_blit(scene, surface)
+        pygame.display.flip()
+
+        if cap is not None:
+            cap.release()
+
+        pygame.quit()
+        print(f"Quit the game after: {time.time() - tic:.2f} seconds")
 
     return 0
 
 
+def entry_point() -> int:
+    """Provide an entry point for a console script."""
+    return main(prog="ski-leu")
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(prog="ski-leu"))
