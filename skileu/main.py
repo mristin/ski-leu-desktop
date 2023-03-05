@@ -65,6 +65,47 @@ SCENE_HEIGHT = 600
 
 ROAD_MARGIN = 128
 
+class ActorSpriteSet:
+    """Represent actor sprites."""
+
+    #: Sprites of the actor idling around
+    idle: List[pygame.surface.Surface]
+
+    #: Sprites of the actor walking to the side
+    walk: List[pygame.surface.Surface]
+
+    def __init__(
+            self,
+            idle: List[pygame.surface.Surface],
+            walk: List[pygame.surface.Surface]
+    )->None:
+        """Initialize with the given values."""
+        self.idle = idle
+        self.walk = walk
+
+# TODO (mristin, 2023-03-5): load and crop at loading — supply parameter sprite_count in the cropping function
+# TODO (mristin, 2023-03-5): action_start — timestamp when the action started
+# TODO (mristin, 2023-03-5): velocity: float 🠒 < 0 left, > 0 right, 0 idle
+# TODO (mristin, 2023-03-5): action_eta — action_start + random(2, 3) seconds
+# TODO (mristin, 2023-03-5):   pick random direction or idle 1/3, 1/3, 1/3,
+# TODO (mristin, 2023-03-5):   if too close to boundary: pick only idle or move to other direction
+# TODO (mristin, 2023-03-5): if would hit the boundary, go to idle, next_action = now
+
+# TODO (mristin, 2023-03-5): every row: 1/2, 1/2 trees or actor
+
+# TODO (mristin, 2023-03-5): https://pygame.readthedocs.io/en/latest/tiles/tiles.html
+#          self.tiles = []
+#         x0 = y0 = self.margin
+#         w, h = self.rect.size
+#         dx = self.size[0] + self.spacing
+#         dy = self.size[1] + self.spacing
+#
+#         for x in range(x0, w, dx):
+#             for y in range(y0, h, dy):
+#                 tile = pygame.Surface(self.size)
+#                 tile.blit(self.image, (0, 0), (x, y, *self.size))
+#                 self.tiles.append(tile)
+
 
 @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
 def load_media() -> Tuple[Optional[Media], Optional[str]]:
