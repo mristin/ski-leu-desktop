@@ -408,7 +408,7 @@ def initialize_state(
     )
 
 
-LEVEL_COUNT = 10
+LEVEL_COUNT = 5
 
 
 @require(lambda xmin_a, xmax_a: xmin_a <= xmax_a)
@@ -597,8 +597,8 @@ def action_from_detection(
         cv2.line(frame_with_wire, hip, knee, (255, 255, 255), 10)
         cv2.line(frame_with_wire, knee, ankle, (255, 255, 255), 10)
 
-        cv2.circle(frame_with_wire, hip, 20, (255, 0, 0), -1)
-        cv2.circle(frame_with_wire, knee, 20, (0, 255, 0), -1)
+        cv2.circle(frame_with_wire, hip, 20, (0, 0, 255), -1)
+        cv2.circle(frame_with_wire, knee, 20, (0, 0, 255), -1)
         cv2.circle(frame_with_wire, ankle, 20, (0, 0, 255), -1)
         # endregion
 
@@ -681,6 +681,14 @@ def render_in_game(
         size=12,
     )
 
+    media.font.render_to(
+        scene,
+        (10, 10),
+        f"Level: {state.level_id + 1} / {LEVEL_COUNT}",
+        (255, 255, 255),
+        size=16,
+    )
+
     return scene
 
 
@@ -707,6 +715,14 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
     elif isinstance(state.game_over, GameOverCrash):
         media.font.render_to(scene, (20, 20), "Game Over :'(", (0, 0, 0), size=16)
 
+        media.font.render_to(
+            scene,
+            (20, 40),
+            f"Level: {state.level_id + 1} out of {LEVEL_COUNT}",
+            (0, 0, 0),
+            size=16,
+        )
+
         draw_skier_on_scene(scene, state.skier, media)
 
         draw_obstacle_on_scene(scene, state.game_over.obstacle)
@@ -724,6 +740,16 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
         (0, 0, 0),
         size=10,
     )
+
+    return scene
+
+
+def render_loading(media: Media) -> pygame.surface.Surface:
+    """Render the "Quitting..." dialogue as a scene."""
+    scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
+    scene.fill((0, 0, 0))
+
+    media.font.render_to(scene, (20, 20), "Loading...", (255, 255, 255), size=32)
 
     return scene
 
@@ -822,6 +848,11 @@ def main(prog: str) -> int:
         )
         return 1
 
+    print("Showing loading...")
+    scene = render_loading(media)
+    resize_image_to_canvas_and_blit(scene, surface)
+    pygame.display.flip()
+
     print("Loading the detector...")
     detector = bodypose.load_detector()
 
@@ -885,18 +916,6 @@ def main(prog: str) -> int:
                         level=level,
                     )
                     continue
-
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_UP:
-                    if state.game_over is None:
-                        state.skier.action = SkierAction.FORWARD
-
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
-                    if state.game_over is None:
-                        state.skier.action = SkierAction.LEFT
-
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_RIGHT:
-                    if state.game_over is None:
-                        state.skier.action = SkierAction.RIGHT
 
                 else:
                     # Ignore events that we do not handle

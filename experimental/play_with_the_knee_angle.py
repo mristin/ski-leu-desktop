@@ -2,8 +2,6 @@
 
 import argparse
 import math
-import os
-import pathlib
 import sys
 from typing import Tuple, Optional
 
@@ -186,6 +184,39 @@ def main() -> int:
                                     ),
                                 ),
                                 position[1],
+                            )
+                        else:
+                            total = ankle[1] - hip[1]
+                            thigh = knee[1] - hip[1]
+                            lower_leg = ankle[1] - knee[1]
+
+                            thigh_percentage = round(thigh / total * 100)
+                            lower_leg_percentage = round(lower_leg / total * 100)
+
+                            cv2.rectangle(
+                                frame,
+                                (0, 0),
+                                (round(thigh / total * frame_width), 20),
+                                (0, 0, 255),
+                                3,
+                            )
+                            cv2.rectangle(
+                                frame,
+                                (0, 20),
+                                (round(lower_leg / total * frame_width), 40),
+                                (255, 0, 0),
+                                3,
+                            )
+
+                            cv2.putText(
+                                frame,
+                                f"thigh {thigh_percentage}%, "
+                                f"lower leg {lower_leg_percentage}%",
+                                (20, 20),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                (255, 255, 255),
+                                3,
                             )
 
             cv2.circle(frame, position, 30, (255, 255, 255), -1)
