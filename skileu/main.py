@@ -46,17 +46,22 @@ class Media:
         self.skier_right_sprite = skier_right_sprite
         self.obstacle_sprites = obstacle_sprites
         self.margin_sprites = margin_sprites
+        self.margin_sprites_mirrored = [
+            pygame.transform.flip(sprite, True, False) for sprite in margin_sprites
+        ]
+
         self.font = font
 
         self.mask_map = {
             sprite: pygame.mask.from_surface(sprite)
             for sprite in [
-                skier_forward_sprite,
-                skier_left_sprite,
-                skier_right_sprite,
+                self.skier_forward_sprite,
+                self.skier_left_sprite,
+                self.skier_right_sprite,
             ]
-            + obstacle_sprites
-            + margin_sprites
+            + self.obstacle_sprites
+            + self.margin_sprites
+            + self.margin_sprites_mirrored
         }
 
 
@@ -64,6 +69,7 @@ SCENE_WIDTH = 800
 SCENE_HEIGHT = 600
 
 ROAD_MARGIN = 128
+
 
 class ActorSpriteSet:
     """Represent actor sprites."""
@@ -75,13 +81,12 @@ class ActorSpriteSet:
     walk: List[pygame.surface.Surface]
 
     def __init__(
-            self,
-            idle: List[pygame.surface.Surface],
-            walk: List[pygame.surface.Surface]
-    )->None:
+        self, idle: List[pygame.surface.Surface], walk: List[pygame.surface.Surface]
+    ) -> None:
         """Initialize with the given values."""
         self.idle = idle
         self.walk = walk
+
 
 # TODO (mristin, 2023-03-5): load and crop at loading — supply parameter sprite_count in the cropping function
 # TODO (mristin, 2023-03-5): action_start — timestamp when the action started
@@ -253,14 +258,10 @@ def generate_level(media: Media) -> Level:
         cursor += sprite.get_height()
     # endregion
 
-    margin_sprites_mirrored = [
-        pygame.transform.flip(sprite, True, False) for sprite in media.margin_sprites
-    ]
-
     # region Generate right margin
     cursor = 0
     while cursor < SCENE_HEIGHT:
-        sprite = random.choice(margin_sprites_mirrored)
+        sprite = random.choice(media.margin_sprites_mirrored)
         obstacles.append(
             Obstacle(sprite=sprite, xy=(SCENE_WIDTH - sprite.get_width(), cursor))
         )
@@ -472,11 +473,13 @@ def intersect(
     )
 
 
+VELOCITY_FACTOR = 0.5
+
 #: Velocity in world coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
-    SkierAction.FORWARD: (0, 50),
-    SkierAction.LEFT: (-50, 30),
-    SkierAction.RIGHT: (50, 30),
+    SkierAction.FORWARD: (0, VELOCITY_FACTOR * 50),
+    SkierAction.LEFT: (-50, VELOCITY_FACTOR * 30),
+    SkierAction.RIGHT: (50, VELOCITY_FACTOR * 30),
 }
 assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 
