@@ -473,7 +473,7 @@ def intersect(
     )
 
 
-VELOCITY_FACTOR = 0.5
+VELOCITY_FACTOR = 0.75
 
 #: Velocity in world coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
