@@ -9,7 +9,7 @@ import pathlib
 import random
 import sys
 import time
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional, Union, Final
 
 import cv2
 import pygame
@@ -28,17 +28,51 @@ PACKAGE_DIR = (
 )
 
 
+class ActorSpriteSet:
+    """Represent actor sprites."""
+
+    #: Sprites of the actor idling around
+    idle: Final[List[pygame.surface.Surface]]
+
+    #: Sprites of the actor walking to the side
+    walk: Final[List[pygame.surface.Surface]]
+
+    #: Maximum width over all the action sprite sets
+    max_width: Final[int]
+
+    #: Maximum height over all the action sprite sets
+    max_height: Final[int]
+
+    def __init__(
+            self, idle: List[pygame.surface.Surface], walk: List[pygame.surface.Surface]
+    ) -> None:
+        """Initialize with the given values."""
+        self.idle = idle
+        self.walk = walk
+
+        self.max_width = max(
+            sprite.get_width()
+            for sprite in self.idle + self.walk
+        )
+
+        self.max_height = max(
+            sprite.get_height()
+            for sprite in self.idle + self.walk
+        )
+
+
 class Media:
     """Represent all the media loaded in the main memory from the file system."""
 
     def __init__(
-        self,
-        skier_forward_sprite: pygame.surface.Surface,
-        skier_left_sprite: pygame.surface.Surface,
-        skier_right_sprite: pygame.surface.Surface,
-        obstacle_sprites: List[pygame.surface.Surface],
-        margin_sprites: List[pygame.surface.Surface],
-        font: pygame.freetype.Font,  # type: ignore
+            self,
+            skier_forward_sprite: pygame.surface.Surface,
+            skier_left_sprite: pygame.surface.Surface,
+            skier_right_sprite: pygame.surface.Surface,
+            obstacle_sprites: List[pygame.surface.Surface],
+            margin_sprites: List[pygame.surface.Surface],
+            actor_sprite_sets: List[ActorSpriteSet],
+            font: pygame.freetype.Font,  # type: ignore
     ) -> None:
         """Initialize with the given values."""
         self.skier_forward_sprite = skier_forward_sprite
@@ -49,19 +83,26 @@ class Media:
         self.margin_sprites_mirrored = [
             pygame.transform.flip(sprite, True, False) for sprite in margin_sprites
         ]
-
+        self.actor_sprite_sets = actor_sprite_sets
         self.font = font
+
+        sprites = (
+                [
+                    self.skier_forward_sprite,
+                    self.skier_left_sprite,
+                    self.skier_right_sprite,
+                ]
+                + self.obstacle_sprites
+                + self.margin_sprites
+                + self.margin_sprites_mirrored
+        )
+        for actor_sprite_set in self.actor_sprite_sets:
+            sprites.extend(actor_sprite_set.walk)
+            sprites.extend(actor_sprite_set.idle)
 
         self.mask_map = {
             sprite: pygame.mask.from_surface(sprite)
-            for sprite in [
-                self.skier_forward_sprite,
-                self.skier_left_sprite,
-                self.skier_right_sprite,
-            ]
-            + self.obstacle_sprites
-            + self.margin_sprites
-            + self.margin_sprites_mirrored
+            for sprite in sprites
         }
 
 
@@ -71,24 +112,41 @@ SCENE_HEIGHT = 600
 ROAD_MARGIN = 128
 
 
-class ActorSpriteSet:
-    """Represent actor sprites."""
+@require(lambda sprite_set, columns: sprite_set.get_width() % columns == 0)
+@require(lambda sprite_set, rows: sprite_set.get_height() % rows == 0)
+@require(lambda rows: rows >= 1)
+@require(lambda columns: columns >= 1)
+@ensure(lambda result, rows: len(result) == rows)
+@ensure(lambda result, columns: all(len(row) == columns for row in result))
+def cut_out_sprite_set(
+        sprite_set: pygame.surface.Surface,
+        rows: int,
+        columns: int
+) -> List[List[pygame.surface.Surface]]:
+    """Cut out a sprite set kept in a single image."""
+    sprite_height = sprite_set.get_height() // rows
+    sprite_width = sprite_set.get_width() // columns
 
-    #: Sprites of the actor idling around
-    idle: List[pygame.surface.Surface]
+    sprite_size = (sprite_width, sprite_height)
 
-    #: Sprites of the actor walking to the side
-    walk: List[pygame.surface.Surface]
+    table = []  # type: List[List[pygame.surface.Surface]]
 
-    def __init__(
-        self, idle: List[pygame.surface.Surface], walk: List[pygame.surface.Surface]
-    ) -> None:
-        """Initialize with the given values."""
-        self.idle = idle
-        self.walk = walk
+    for row_i in range(rows):
+        row = []  # type: List[pygame.surface.Surface]
+        for column_i in range(rows):
+            x = column_i * sprite_width
+            y = row_i * sprite_height
+
+            sprite = pygame.surface.Surface(sprite_size)
+            sprite.blit(sprite_set, (0, 0), (x, y, sprite_width, sprite_height))
+
+            row.append(sprite)
+
+        table.append(row)
+
+    return table
 
 
-# TODO (mristin, 2023-03-5): load and crop at loading — supply parameter sprite_count in the cropping function
 # TODO (mristin, 2023-03-5): action_start — timestamp when the action started
 # TODO (mristin, 2023-03-5): velocity: float 🠒 < 0 left, > 0 right, 0 idle
 # TODO (mristin, 2023-03-5): action_eta — action_start + random(2, 3) seconds
@@ -97,19 +155,6 @@ class ActorSpriteSet:
 # TODO (mristin, 2023-03-5): if would hit the boundary, go to idle, next_action = now
 
 # TODO (mristin, 2023-03-5): every row: 1/2, 1/2 trees or actor
-
-# TODO (mristin, 2023-03-5): https://pygame.readthedocs.io/en/latest/tiles/tiles.html
-#          self.tiles = []
-#         x0 = y0 = self.margin
-#         w, h = self.rect.size
-#         dx = self.size[0] + self.spacing
-#         dy = self.size[1] + self.spacing
-#
-#         for x in range(x0, w, dx):
-#             for y in range(y0, h, dy):
-#                 tile = pygame.Surface(self.size)
-#                 tile.blit(self.image, (0, 0), (x, y, *self.size))
-#                 self.tiles.append(tile)
 
 
 @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
@@ -159,6 +204,36 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
 
         margin_sprites.append(sprite)
 
+    actor_sprite_sets = []  # type: List[ActorSpriteSet]
+    actor_dir = PACKAGE_DIR / "media/images/actors"
+    for pth in sorted(actor_dir.iterdir()):
+        if not pth.is_dir():
+            continue
+
+        idle_pth = pth / "idle.png"
+        if not idle_pth.exists():
+            return None, f"The sprite set does not exist: {idle_pth}"
+
+        try:
+            sprite_set = pygame.image.load(str(idle_pth)).convert_alpha()
+            sprite_table = cut_out_sprite_set(sprite_set, 1, 10)
+            idle_sprites = sprite_table[0]
+        except Exception as exception:
+            return None, f"Failed to load the sprite set {idle_pth}: {exception}"
+
+        walk_pth = pth / "walk.png"
+        if not walk_pth.exists():
+            return None, f"The sprite set does not exist: {walk_pth}"
+
+        try:
+            sprite_set = pygame.image.load(str(walk_pth)).convert_alpha()
+            sprite_table = cut_out_sprite_set(sprite_set, 1, 10)
+            walk_sprites = sprite_table[0]
+        except Exception as exception:
+            return None, f"Failed to load the sprite set {walk_pth}: {exception}"
+
+        actor_sprite_sets.append(ActorSpriteSet(idle=idle_sprites, walk=walk_sprites))
+
     pth = PACKAGE_DIR / "media/fonts/freesansbold.ttf"
     try:
         font = pygame.freetype.Font(str(pth))  # type: ignore
@@ -172,6 +247,7 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
             skier_right_sprite=skier_right_sprite,
             obstacle_sprites=obstacle_sprites,
             margin_sprites=margin_sprites,
+            actor_sprite_sets=actor_sprite_sets,
             font=font,
         ),
         None,
@@ -207,14 +283,75 @@ def calculate_obstacle_bounding_box(obstacle: Obstacle) -> Tuple[int, int, int, 
     )
 
 
+class Actor:
+    """Represent an actor in the level."""
+
+    #: Appearance
+    sprite_set: ActorSpriteSet
+
+    #: Top-left corner, in world coordinates
+    xy: Tuple[int, int]
+
+    #: Always positive, or 0 if idling
+    velocity: float
+
+    #: <0 => left, >1 => right
+    direction: int
+
+    action_start: float
+    action_eta: float
+
+    def __init__(
+            self,
+            sprite_set: ActorSpriteSet,
+            xy: Tuple[int, int],
+            velocity: float,
+            direction: int,
+            action_start: float,
+            action_eta: float
+    ) -> None:
+        """Initialize with the given values."""
+        self.sprite_set = sprite_set
+        self.xy = xy
+        self.velocity = velocity
+        self.direction = direction
+        self.action_start = action_start
+        self.action_eta = action_eta
+
+    def determine_sprite(self, now: float) -> pygame.surface.Surface:
+        """
+        Determine the sprite given the timestamp.
+
+        Do not forget to mirror the sprite accordingly depending on the direction if
+        you want to display it. The sprites in the memory are all directed to the left.
+        """
+        # In seconds
+        animation_lambda = 0.2
+
+        i = round((now - self.action_start) / animation_lambda)
+
+        if self.velocity == 0:
+            return self.sprite_set.idle[i % len(self.sprite_set.idle)]
+        else:
+            return self.sprite_set.walk[i % len(self.sprite_set.walk)]
+
+    # TODO (mristin, 2023-03-6): implement determine_bounding_box(now)
+
+
 class Level:
     """Represent a single scene."""
 
     obstacles: List[Obstacle]
+    actors: List[Actor]
 
-    def __init__(self, obstacles: List[Obstacle]) -> None:
+    def __init__(
+            self,
+            obstacles: List[Obstacle],
+            actors: List[Actor]
+    ) -> None:
         """Initialize with the given values."""
         self.obstacles = obstacles
+        self.actors = actors
 
 
 def calculate_skier_width(media: Media) -> int:
@@ -241,9 +378,10 @@ def calculate_skier_height(media: Media) -> int:
     )
 
 
-def generate_level(media: Media) -> Level:
+def generate_level(now: float, media: Media) -> Level:
     """Generate randomly a level."""
     obstacles = []  # type: List[Obstacle]
+    actors = []  # type: List[Actor]
 
     assert all(sprite.get_height() > 0 for sprite in media.margin_sprites), (
         "All margin sprites at least 1 pixel tall "
@@ -268,16 +406,22 @@ def generate_level(media: Media) -> Level:
         cursor += sprite.get_height()
     # endregion
 
-    # region Generate obstacles
+    # region Generate obstacles and actors
     assert all(sprite.get_height() > 0 for sprite in media.obstacle_sprites), (
         "All obstacle sprites at least 1 pixel tall "
         "so that we do not enter an endless loop"
     )
 
-    max_obstacle_height = max(sprite.get_height() for sprite in media.obstacle_sprites)
+    max_obstacle_and_actor_height = max(
+        max(sprite.get_height() for sprite in media.obstacle_sprites),
+        max(
+            actor_sprite_set.max_height
+            for actor_sprite_set in media.actor_sprite_sets
+        )
+    )
 
-    row_height = round(max_obstacle_height * 2.5)
-    padding = round((row_height - max_obstacle_height) / 2)
+    row_height = round(max_obstacle_and_actor_height * 2.5)
+    padding = round((row_height - max_obstacle_and_actor_height) / 2)
 
     skier_width = calculate_skier_width(media)
 
@@ -285,32 +429,60 @@ def generate_level(media: Media) -> Level:
 
     # Skp the first row so that the player can get prepared
     cursor = 2 * calculate_skier_height(media)
-    while cursor < SCENE_HEIGHT - max_obstacle_height:
-        last_x = None  # type: Optional[int]
-        while True:
-            obstacle_sprite = random.choice(media.obstacle_sprites)
+    while cursor < SCENE_HEIGHT - max_obstacle_and_actor_height:
+        coin = 1 if random.random() > 0.5 else 0
 
-            if last_x is None:
-                x = margin_width + random.randint(0, skier_width)
-            else:
-                x = last_x + random.randint(2 * skier_width, 3 * skier_width)
+        if coin == 0:
+            last_x = None  # type: Optional[int]
+            while True:
+                obstacle_sprite = random.choice(media.obstacle_sprites)
 
-            last_x = x
+                if last_x is None:
+                    x = margin_width + random.randint(0, skier_width)
+                else:
+                    x = last_x + random.randint(2 * skier_width, 3 * skier_width)
 
-            # Add some jitter to y to make the level more natural
-            y = cursor + obstacle_sprite.get_height() + random.randint(0, padding)
+                last_x = x
 
-            # We can not display this obstacle, so we are done for
-            # the row.
-            if x + obstacle_sprite.get_width() >= SCENE_WIDTH - margin_width:
-                break
+                # Add some jitter to y to make the level more natural
+                y = cursor + obstacle_sprite.get_height() + random.randint(0, padding)
 
-            obstacles.append(Obstacle(sprite=obstacle_sprite, xy=(x, y)))
+                # We can not display this obstacle, so we are done for
+                # the row.
+                if x + obstacle_sprite.get_width() >= SCENE_WIDTH - margin_width:
+                    break
+
+                obstacles.append(Obstacle(sprite=obstacle_sprite, xy=(x, y)))
+        elif coin == 1:
+            actor_sprite_set = random.choice(media.actor_sprite_sets)
+
+            actor_first_x = margin_width
+            actor_last_x = SCENE_WIDTH - margin_width - actor_sprite_set.max_width
+
+            y = cursor + actor_sprite_set.max_height + random.randint(0, padding)
+
+            actor = Actor(
+                sprite_set=actor_sprite_set,
+                xy=(
+                    random.randint(actor_first_x, actor_last_x),
+                    y
+                ),
+                velocity=0,
+                action_start=now,
+                # We will immediately pick a random action at the next tick.
+                # This makes the logic of level generation much simpler.
+                action_eta=now
+            )
+
+            actors.append(actor)
+
+        else:
+            raise AssertionError(f"Unexpected coin: {coin}")
 
         cursor += row_height
     # endregion
 
-    return Level(obstacles=obstacles)
+    return Level(obstacles=obstacles, actors=actors)
 
 
 class SkierAction(enum.Enum):
@@ -348,7 +520,7 @@ def skier_action_to_sprite(action: SkierAction, media: Media) -> pygame.surface.
 
 
 def calculate_skier_xmin_ymin(
-    xy: Tuple[int, int], skier_sprite: pygame.surface.Surface
+        xy: Tuple[int, int], skier_sprite: pygame.surface.Surface
 ) -> Tuple[int, int]:
     """
     Calculate the skier corner.
@@ -362,7 +534,7 @@ def calculate_skier_xmin_ymin(
 
 
 def calculate_skier_bounding_box(
-    center_xy: Tuple[int, int], skier_sprite: pygame.surface.Surface
+        center_xy: Tuple[int, int], skier_sprite: pygame.surface.Surface
 ) -> Tuple[int, int, int, int]:
     """
     Compute (xmin, ymin, xmax, ymax) based on the center (x, y).
@@ -399,7 +571,7 @@ class GameOverCrash(GameOver):
     collision_xy: Tuple[int, int]
 
     def __init__(
-        self, timestamp: float, obstacle: Obstacle, collision_xy: Tuple[int, int]
+            self, timestamp: float, obstacle: Obstacle, collision_xy: Tuple[int, int]
     ) -> None:
         """Initialize with the given values."""
         GameOver.__init__(self, timestamp)
@@ -433,7 +605,7 @@ class State:
 
 
 def initialize_state(
-    state: State, game_start: float, media: Media, level: Level
+        state: State, game_start: float, media: Media, level: Level
 ) -> None:
     """Initialize the state to the start one."""
     state.received_quit = False
@@ -458,18 +630,18 @@ LEVEL_COUNT = 5
 @require(lambda xmin_b, xmax_b: xmin_b <= xmax_b)
 @require(lambda ymin_b, ymax_b: ymin_b <= ymax_b)
 def intersect(
-    xmin_a: Union[int, float],
-    ymin_a: Union[int, float],
-    xmax_a: Union[int, float],
-    ymax_a: Union[int, float],
-    xmin_b: Union[int, float],
-    ymin_b: Union[int, float],
-    xmax_b: Union[int, float],
-    ymax_b: Union[int, float],
+        xmin_a: Union[int, float],
+        ymin_a: Union[int, float],
+        xmax_a: Union[int, float],
+        ymax_a: Union[int, float],
+        xmin_b: Union[int, float],
+        ymin_b: Union[int, float],
+        xmax_b: Union[int, float],
+        ymax_b: Union[int, float],
 ) -> bool:
     """Return true if the two bounding boxes intersect."""
     return (xmin_a <= xmax_b and xmax_a >= xmin_b) and (
-        ymin_a <= ymax_b and ymax_a >= ymin_b
+            ymin_a <= ymax_b and ymax_a >= ymin_b
     )
 
 
@@ -502,14 +674,14 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
         obstacle_bbox = calculate_obstacle_bounding_box(obstacle)
 
         if intersect(
-            skier_bbox[0],
-            skier_bbox[1],
-            skier_bbox[2],
-            skier_bbox[3],
-            obstacle_bbox[0],
-            obstacle_bbox[1],
-            obstacle_bbox[2],
-            obstacle_bbox[3],
+                skier_bbox[0],
+                skier_bbox[1],
+                skier_bbox[2],
+                skier_bbox[3],
+                obstacle_bbox[0],
+                obstacle_bbox[1],
+                obstacle_bbox[2],
+                obstacle_bbox[3],
         ):
             skier_mask = media.mask_map[skier_sprite]
             obstacle_mask = media.mask_map[obstacle.sprite]
@@ -588,7 +760,7 @@ def cvmat_to_surface(image: cv2.Mat) -> pygame.surface.Surface:
 
 
 def action_from_detection(
-    detection: bodypose.Detection, frame: cv2.Mat
+        detection: bodypose.Detection, frame: cv2.Mat
 ) -> Tuple[Optional[SkierAction], pygame.surface.Surface]:
     """
     Infer the action based on the body pose detection.
@@ -615,12 +787,12 @@ def action_from_detection(
 
     action = None  # type: Optional[SkierAction]
     if (
-        left_hip is not None
-        and right_hip is not None
-        and left_knee is not None
-        and right_knee is not None
-        and left_ankle is not None
-        and right_ankle is not None
+            left_hip is not None
+            and right_hip is not None
+            and left_knee is not None
+            and right_knee is not None
+            and left_ankle is not None
+            and right_ankle is not None
     ):
         hip = (
             round(frame_width * (left_hip.x + right_hip.x) / 2.0),
@@ -681,7 +853,7 @@ def draw_obstacle_on_scene(scene: pygame.surface.Surface, obstacle: Obstacle) ->
 
 
 def draw_skier_on_scene(
-    scene: pygame.surface.Surface, skier: Skier, media: Media
+        scene: pygame.surface.Surface, skier: Skier, media: Media
 ) -> None:
     """Draw the skier on the scene."""
     skier_sprite = skier_action_to_sprite(skier.action, media)
@@ -699,7 +871,7 @@ def draw_skier_on_scene(
 
 @require(lambda state: state.game_over is None)
 def render_in_game(
-    state: State, media: Media, frame_with_wire: pygame.surface.Surface
+        state: State, media: Media, frame_with_wire: pygame.surface.Surface
 ) -> pygame.surface.Surface:
     """Render the game screen based on the state."""
     scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
@@ -809,7 +981,7 @@ def render_quit(media: Media) -> pygame.surface.Surface:
 
 
 def resize_image_to_canvas_and_blit(
-    image: pygame.surface.Surface, canvas: pygame.surface.Surface
+        image: pygame.surface.Surface, canvas: pygame.surface.Surface
 ) -> None:
     """Draw the image on canvas resizing it to maximum at constant aspect ratio."""
     canvas.fill((0, 0, 0))
@@ -946,8 +1118,8 @@ def main(prog: str) -> int:
                     continue
 
                 elif event.type == pygame.KEYDOWN and event.key in (
-                    pygame.K_ESCAPE,
-                    pygame.K_q,
+                        pygame.K_ESCAPE,
+                        pygame.K_q,
                 ):
                     state.received_quit = True
                     continue
