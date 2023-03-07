@@ -1,5 +1,5 @@
 """Ski through a dangerous forest."""
-
+import abc
 import argparse
 import enum
 import fractions
@@ -9,12 +9,12 @@ import pathlib
 import random
 import sys
 import time
-from typing import List, Tuple, Optional, Union, Final
+from typing import List, Tuple, Optional, Union, Final, Iterator
 
 import cv2
 import pygame
 import pygame.freetype
-from icontract import require, ensure
+from icontract import require, ensure, DBC
 
 import skileu
 from skileu import common, bodypose
@@ -28,14 +28,36 @@ PACKAGE_DIR = (
 )
 
 
+class SpriteMask:
+    "Represent a sprite with a bitmask."
+    sprite: Final[pygame.surface.Surface]
+    mask: Final[pygame.mask.Mask]
+
+    def __init__(self, sprite: pygame.surface.Surface, mask: pygame.mask.Mask) -> None:
+        """Initialize with the given values."""
+        self.sprite = sprite
+        self.mask = pygame.mask.from_surface(sprite)
+
+# TODO (mristin, 2023-03-7): continue here
+# TODO (mristin, 2023-03-7): refactor ActorSpriteSet, SkierSpriteSet and Obstacle to use SpriteMask
+# TODO (mristin, 2023-03-7): refactor Object to use SpriteMask instead of get_sprite and get_mask
+# TODO (mristin, 2023-03-7): then continue with the game logic
+
+
 class ActorSpriteSet:
     """Represent actor sprites."""
 
     #: Sprites of the actor idling around
     idle: Final[List[pygame.surface.Surface]]
 
+    #: Bitmasks
+    idle_masks: Final[List[pygame.mask.Mask]]
+
     #: Sprites of the actor walking to the side
     walk: Final[List[pygame.surface.Surface]]
+
+    #: Bitmasks
+    walk_masks: Final[List[pygame.mask.Mask]]
 
     #: Maximum width over all the action sprite sets
     max_width: Final[int]
@@ -43,12 +65,40 @@ class ActorSpriteSet:
     #: Maximum height over all the action sprite sets
     max_height: Final[int]
 
+    # fmt: off
+    @ensure(
+        lambda idle, idle_masks:
+        len(idle) == len(idle_masks)
+        and all(
+            sprite.get_size() == mask.get_size()
+            for sprite, mask in zip(idle, idle_masks)
+        )
+    )
+    @ensure(
+        lambda walk, walk_masks:
+        len(walk) == len(walk_masks)
+        and all(
+            sprite.get_size() == mask.get_size()
+            for sprite, mask in zip(walk, walk_masks)
+        )
+    )
+    # fmt: on
     def __init__(
             self, idle: List[pygame.surface.Surface], walk: List[pygame.surface.Surface]
     ) -> None:
         """Initialize with the given values."""
         self.idle = idle
         self.walk = walk
+
+        self.idle_masks = [
+            pygame.mask.from_surface(sprite)
+            for sprite in self.idle
+        ]
+
+        self.walk_masks = [
+            pygame.mask.from_surface(sprite)
+            for sprite in self.idle
+        ]
 
         self.max_width = max(
             sprite.get_width()
@@ -157,6 +207,27 @@ def cut_out_sprite_set(
 # TODO (mristin, 2023-03-5): every row: 1/2, 1/2 trees or actor
 
 
+
+class SkierSpriteSet:
+    left: Final[pygame.surface.Surface]
+    left_mask: Final[pygame.mask.Mask]
+
+    right: Final[pygame.surface.Surface]
+    left_mask: Final[pygame.mask.Mask]
+
+    forward: Final[pygame.surface.Surface]
+    forward_mask: Final[pygame.mask.Mask]
+
+    def __init__(self, left: pygame.surface.Surface, right: pygame.surface.Surface, forward: pygame.surface.Surface)->None:
+        """Initialize with the given values."""
+        self.left = left
+        self.left_mask = pygame.mask.from_surface(self.left)
+
+        self.right = right
+        self.left_mask = pygame.mask.from_surface(self.left)
+
+        self.forward = forward
+
 @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
 def load_media() -> Tuple[Optional[Media], Optional[str]]:
     """Load the media from the file system."""
@@ -254,43 +325,164 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
     )
 
 
-class Obstacle:
-    """Represent an obstacle in the level."""
-
-    #: Appearance
-    sprite: pygame.surface.Surface
-
-    #: Top-left corner, in world coordinates
-    xy: Tuple[int, int]
-
-    def __init__(self, sprite: pygame.surface.Surface, xy: Tuple[int, int]) -> None:
-        """Initialize with the given values."""
-        self.sprite = sprite
-        self.xy = xy
-
-
-def calculate_obstacle_bounding_box(obstacle: Obstacle) -> Tuple[int, int, int, int]:
-    """
-    Compute the bounding box of the obstacle based on its location.
-
-    In the world coordinates, (xmin, ymin, xmax, ymax).
-    """
-    return (
-        obstacle.xy[0],
-        obstacle.xy[1],
-        obstacle.xy[0] + obstacle.sprite.get_width(),
-        obstacle.xy[1] + obstacle.sprite.get_height(),
+@require(lambda xmin_a, xmax_a: xmin_a <= xmax_a)
+@require(lambda ymin_a, ymax_a: ymin_a <= ymax_a)
+@require(lambda xmin_b, xmax_b: xmin_b <= xmax_b)
+@require(lambda ymin_b, ymax_b: ymin_b <= ymax_b)
+def intersect(
+        xmin_a: Union[int, float],
+        ymin_a: Union[int, float],
+        xmax_a: Union[int, float],
+        ymax_a: Union[int, float],
+        xmin_b: Union[int, float],
+        ymin_b: Union[int, float],
+        xmax_b: Union[int, float],
+        ymax_b: Union[int, float],
+) -> bool:
+    """Return true if the two bounding boxes intersect."""
+    return (xmin_a <= xmax_b and xmax_a >= xmin_b) and (
+            ymin_a <= ymax_b and ymax_a >= ymin_b
     )
 
 
-class Actor:
-    """Represent an actor in the level."""
+class Object(DBC):
+    """Represent an object of the game."""
+
+    @abc.abstractmethod
+    def get_xy(self) -> Tuple[int, int]:
+        """Return top-left corner, in world coordinates"""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def set_xy(self, xy: Tuple[int, int]) -> None:
+        """Set the top-left corner, in world coordinates."""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def get_sprite(self) -> pygame.surface.Surface:
+        """Retrieve the sprite of the object."""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def get_mask(self) -> pygame.mask.Mask:
+        """Get the object's bitmask given the timestamp."""
+        raise NotImplementedError()
+
+    def calculate_bounding_box(self) -> Tuple[int, int, int, int]:
+        """Compute the bounding box of the object based on the time stamp."""
+        sprite = self.get_sprite()
+        xy = self.get_xy()
+
+        return (
+            xy[0],
+            xy[1],
+            xy[0] + sprite.get_width(),
+            xy[1] + sprite.get_height(),
+        )
+
+    def calculate_collision(
+            self,
+            others: Iterator["Object"]
+    ) -> Optional[Tuple["Object", Tuple[int, int]]]:
+        """
+        Calculate the position of the collision with another object, if any.
+        
+        In world coordinates.
+        """
+        bbox = self.calculate_bounding_box()
+        mask = self.get_mask()
+
+        for other in others:
+            other_bbox = other.calculate_bounding_box()
+            if intersect(
+                    *bbox,
+                    *other_bbox
+            ):
+                other_mask = other.get_mask()
+
+                # NOTE (mristin, 2023-03-05):
+                # World coordinates start in bottom-left corner. Screen coordinates start in
+                # top-left.
+                #
+                # The mask offsets need to be computed in the screen coordinates.
+                # See: https://www.pygame.org/docs/ref/mask.html#mask-offset-label
+
+                world_xmin, _, _, world_ymax = bbox
+
+                screen_xy = world_xy_to_screen_xy(
+                    (world_xmin, world_ymax)
+                )
+
+                other_world_xmin, _, _, other_world_ymax = other_bbox
+                other_screen_xy = world_xy_to_screen_xy(
+                    (other_world_xmin, other_world_ymax)
+                )
+
+                offset = (
+                    other_screen_xy[0] - screen_xy[0],
+                    other_screen_xy[1] - screen_xy[1],
+                )
+
+                collision_screen_xy = mask.overlap(other_mask, offset)
+
+                if collision_screen_xy is not None:
+                    # NOTE (mristin, 2023-03-05):
+                    # We convert here screen to world coordinates.
+                    return (
+                        other,
+                        (
+                            collision_screen_xy[0] + screen_xy[0],
+                            SCENE_HEIGHT - (collision_screen_xy[1] + screen_xy[1])
+                        )
+                    )
+
+        return None
+
+
+class Obstacle(Object):
+    """Represent an obstacle in the level."""
 
     #: Appearance
-    sprite_set: ActorSpriteSet
+    _sprite: pygame.surface.Surface
+
+    #: Bitmask
+    _mask: pygame.mask.Mask
 
     #: Top-left corner, in world coordinates
-    xy: Tuple[int, int]
+    _xy: Tuple[int, int]
+
+    def __init__(
+            self,
+            sprite: pygame.surface.Surface,
+            mask: pygame.mask.Mask,
+            xy: Tuple[int, int]
+    ) -> None:
+        """Initialize with the given values."""
+        self._sprite = sprite
+        self._mask = mask
+        self.xy = xy
+
+    def get_xy(self) -> Tuple[int, int]:
+        return self._xy
+
+    def set_xy(self, xy: Tuple[int, int]) -> None:
+        self._xy = xy
+
+    def get_sprite(self) -> pygame.surface.Surface:
+        return self._sprite
+
+    def get_mask(self) -> pygame.mask.Mask:
+        return self._mask
+
+
+class Actor(Object):
+    """Represent a non-player character in the level."""
+
+    #: Appearance
+    sprite_set: Final[ActorSpriteSet]
+
+    #: Top-left corner, in world coordinates
+    _xy: Tuple[int, int]
 
     #: Always positive, or 0 if idling
     velocity: float
@@ -303,6 +495,7 @@ class Actor:
 
     def __init__(
             self,
+            media: Media,
             sprite_set: ActorSpriteSet,
             xy: Tuple[int, int],
             velocity: float,
@@ -318,24 +511,38 @@ class Actor:
         self.action_start = action_start
         self.action_eta = action_eta
 
-    def determine_sprite(self, now: float) -> pygame.surface.Surface:
+    def determine_actor_sprite(self, now: float) -> pygame.surface.Surface:
         """
         Determine the sprite given the timestamp.
-
+    
         Do not forget to mirror the sprite accordingly depending on the direction if
         you want to display it. The sprites in the memory are all directed to the left.
         """
         # In seconds
         animation_lambda = 0.2
 
-        i = round((now - self.action_start) / animation_lambda)
+        i = round((now - actor.action_start) / animation_lambda)
 
-        if self.velocity == 0:
-            return self.sprite_set.idle[i % len(self.sprite_set.idle)]
+        if actor.velocity == 0:
+            return actor.sprite_set.idle[i % len(actor.sprite_set.idle)]
         else:
-            return self.sprite_set.walk[i % len(self.sprite_set.walk)]
+            return actor.sprite_set.walk[i % len(actor.sprite_set.walk)]
 
-    # TODO (mristin, 2023-03-6): implement determine_bounding_box(now)
+
+def calculate_actor_bounding_box(actor: Actor, now: float) -> Tuple[int, int, int, int]:
+    """
+    Determine the bounding box given the timestamp.
+    
+    In world coordinates, (xmin, ymin, xmax, ymax).
+    """
+    sprite = determine_actor_sprite(actor, now)
+
+    return (
+        actor.xy[0],
+        actor.xy[1],
+        actor.xy[0] + sprite.get_width(),
+        actor.xy[1] + sprite.get_height(),
+    )
 
 
 class Level:
@@ -468,6 +675,7 @@ def generate_level(now: float, media: Media) -> Level:
                     y
                 ),
                 velocity=0,
+                direction=random.randint(0, 1),
                 action_start=now,
                 # We will immediately pick a random action at the next tick.
                 # This makes the logic of level generation much simpler.
@@ -564,18 +772,21 @@ class GameOverOk(GameOver):
 
 
 class GameOverCrash(GameOver):
-    #: Obstacle that the skier had a collision with
-    obstacle: Obstacle
+    #: Obstacle or actor that the skier had a collision with
+    collider: Union[Obstacle, Actor]
 
     #: Collision location, in world coordinates
     collision_xy: Tuple[int, int]
 
     def __init__(
-            self, timestamp: float, obstacle: Obstacle, collision_xy: Tuple[int, int]
+            self,
+            timestamp: float,
+            collider: Union[Obstacle, Actor],
+            collision_xy: Tuple[int, int]
     ) -> None:
         """Initialize with the given values."""
         GameOver.__init__(self, timestamp)
-        self.obstacle = obstacle
+        self.collider = collider
         self.collision_xy = collision_xy
 
 
@@ -624,27 +835,6 @@ def initialize_state(
 
 LEVEL_COUNT = 5
 
-
-@require(lambda xmin_a, xmax_a: xmin_a <= xmax_a)
-@require(lambda ymin_a, ymax_a: ymin_a <= ymax_a)
-@require(lambda xmin_b, xmax_b: xmin_b <= xmax_b)
-@require(lambda ymin_b, ymax_b: ymin_b <= ymax_b)
-def intersect(
-        xmin_a: Union[int, float],
-        ymin_a: Union[int, float],
-        xmax_a: Union[int, float],
-        ymax_a: Union[int, float],
-        xmin_b: Union[int, float],
-        ymin_b: Union[int, float],
-        xmax_b: Union[int, float],
-        ymax_b: Union[int, float],
-) -> bool:
-    """Return true if the two bounding boxes intersect."""
-    return (xmin_a <= xmax_b and xmax_a >= xmin_b) and (
-            ymin_a <= ymax_b and ymax_a >= ymin_b
-    )
-
-
 VELOCITY_FACTOR = 0.75
 
 #: Velocity in world coordinates depending on action, (x, y)
@@ -665,7 +855,7 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
     if state.game_over is not None:
         return
 
-    # region Check for collision(s) between obstacles and the skier
+    # region Check for collision(s) between obstacles, actors and the skier
     skier_sprite = skier_action_to_sprite(state.skier.action, media)
 
     skier_bbox = calculate_skier_bounding_box(state.skier.center_xy, skier_sprite)
