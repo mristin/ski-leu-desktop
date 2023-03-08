@@ -1278,8 +1278,7 @@ def main(prog: str) -> int:
     pygame.display.flip()
 
     print("Loading the detector...")
-    # detector = bodypose.load_detector()
-    detector = bodypose.load_empty_detector()
+    detector = bodypose.load_detector()
 
     clock = pygame.time.Clock()
 
