@@ -560,16 +560,13 @@ def generate_level(now: float, media: Media) -> Level:
         coin = random.random()
 
         if coin < 0.7:
-            last_x = None  # type: Optional[int]
+            next_x_start = margin_width
             while True:
                 obstacle_sprite = random.choice(media.obstacle_sprites)
 
-                if last_x is None:
-                    x = margin_width + random.randint(0, skier_width)
-                else:
-                    x = last_x + random.randint(2 * skier_width, 3 * skier_width)
-
-                last_x = x
+                x = next_x_start + random.randint(
+                    round(1.1 * skier_width), 2 * skier_width
+                )
 
                 # Add some jitter to y to make the level more natural
                 y = min(
@@ -583,6 +580,7 @@ def generate_level(now: float, media: Media) -> Level:
                     break
 
                 obstacles.append(Obstacle(masked_sprite=obstacle_sprite, xy=(x, y)))
+                next_x_start = x + obstacle_sprite.get_width()
 
             cursor += row_height
         else:
@@ -1180,7 +1178,8 @@ def main(prog: str) -> int:
 
     pygame.display.set_caption("Ski Leu")
 
-    surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    # surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    surface = pygame.display.set_mode((SCENE_WIDTH, SCENE_HEIGHT))
 
     print("Loading the media...")
     try:
@@ -1204,7 +1203,8 @@ def main(prog: str) -> int:
     pygame.display.flip()
 
     print("Loading the detector...")
-    detector = bodypose.load_detector()
+    # detector = bodypose.load_detector()
+    detector = bodypose.load_empty_detector()
 
     clock = pygame.time.Clock()
 
