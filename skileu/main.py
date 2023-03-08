@@ -327,7 +327,13 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
                 right=MaskedSprite(skier_right_sprite),
                 forward=MaskedSprite(skier_forward_sprite),
             ),
-            obstacle_sprites=[MaskedSprite(sprite) for sprite in obstacle_sprites],
+            obstacle_sprites=[
+                MaskedSprite(sprite)
+                for sprite in obstacle_sprites
+            ] + [
+                MaskedSprite(pygame.transform.flip(sprite, True, False))
+                for sprite in obstacle_sprites
+            ],
             margin_sprites=[MaskedSprite(sprite) for sprite in margin_sprites],
             actor_sprite_sets=actor_sprite_sets,
             font=font,
@@ -1178,8 +1184,7 @@ def main(prog: str) -> int:
 
     pygame.display.set_caption("Ski Leu")
 
-    # surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    surface = pygame.display.set_mode((SCENE_WIDTH, SCENE_HEIGHT))
+    surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 
     print("Loading the media...")
     try:
@@ -1203,8 +1208,7 @@ def main(prog: str) -> int:
     pygame.display.flip()
 
     print("Loading the detector...")
-    # detector = bodypose.load_detector()
-    detector = bodypose.load_empty_detector()
+    detector = bodypose.load_detector()
 
     clock = pygame.time.Clock()
 
