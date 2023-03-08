@@ -53,12 +53,26 @@ class MaskedSprite:
         return self.get_size()
 
 
+def make_non_transparent_light_gray(sprite: pygame.surface.Surface) -> None:
+    """Set all the non-transparent pixels to light gray."""
+    for y in range(sprite.get_height()):
+        for x in range(sprite.get_width()):
+            xy = (x, y)
+            pixel = sprite.get_at(xy)
+            if pixel[3] != 0:
+                sprite.set_at(xy, (200, 200, 200, 255))
+
+
 class SkierSpriteSet:
     """Capture the appearance of the skier."""
 
     left: Final[MaskedSprite]
     right: Final[MaskedSprite]
     forward: Final[MaskedSprite]
+
+    left_trail: Final[pygame.surface.Surface]
+    right_trail: Final[pygame.surface.Surface]
+    forward_trail: Final[pygame.surface.Surface]
 
     max_height: Final[int]
     max_width: Final[int]
@@ -79,6 +93,21 @@ class SkierSpriteSet:
 
         self.max_width = max_width
         self.max_height = max_height
+
+        self.left_trail = left.sprite.subsurface(
+            (0, left.get_height() - 4, left.get_width(), 4)
+        )
+        make_non_transparent_light_gray(self.left_trail)
+
+        self.right_trail = right.sprite.subsurface(
+            (0, right.get_height() - 4, right.get_width(), 4)
+        )
+        make_non_transparent_light_gray(self.right_trail)
+
+        self.forward_trail = forward.sprite.subsurface(
+            (0, forward.get_height() - 4, forward.get_width(), 4)
+        )
+        make_non_transparent_light_gray(self.forward_trail)
 
 
 class ActorSpriteSet:
@@ -457,10 +486,15 @@ class Level:
     obstacles: List[Obstacle]
     actors: List[Actor]
 
+    snow: pygame.surface.Surface
+
     def __init__(self, obstacles: List[Obstacle], actors: List[Actor]) -> None:
         """Initialize with the given values."""
         self.obstacles = obstacles
         self.actors = actors
+
+        self.snow = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
+        self.snow.fill((255, 255, 255))
 
 
 def generate_level(now: float, media: Media) -> Level:
@@ -619,6 +653,17 @@ class Skier:
             return self.skier_sprite_set.right
         elif self.action is SkierAction.FORWARD:
             return self.skier_sprite_set.forward
+        else:
+            common.assert_never(self.action)
+
+    def determine_trail_sprite(self) -> pygame.surface.Surface:
+        """Determine the sprite for the trail."""
+        if self.action is SkierAction.LEFT:
+            return self.skier_sprite_set.left_trail
+        elif self.action is SkierAction.RIGHT:
+            return self.skier_sprite_set.right_trail
+        elif self.action is SkierAction.FORWARD:
+            return self.skier_sprite_set.forward_trail
         else:
             common.assert_never(self.action)
 
@@ -801,6 +846,12 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
         return
     # endregion
 
+    # region Leave the trail
+    trail_sprite = state.skier.determine_trail_sprite()
+    trail_xy = (skier_xy[0], skier_xy[1] + skier_masked_sprite.get_height() - 1)
+    state.level.snow.blit(trail_sprite, trail_xy)
+    # endregion
+
     # region Update skier
     velocity = VELOCITY_DISPATCH[state.skier.action]
 
@@ -951,7 +1002,7 @@ def render_in_game(
 ) -> pygame.surface.Surface:
     """Render the game screen based on the state."""
     scene = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT))
-    scene.fill((255, 255, 255))
+    scene.blit(state.level.snow, (0, 0))
 
     for obstacle in state.level.obstacles:
         draw_obstacle_on_scene(scene, obstacle)
