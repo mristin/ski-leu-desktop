@@ -10,7 +10,7 @@ import pathlib
 import random
 import sys
 import time
-from typing import List, Tuple, Optional, Union, Final
+from typing import List, Tuple, Optional, Union, Final, Protocol
 
 import cv2
 import pygame
@@ -23,7 +23,7 @@ from skileu import common, bodypose
 assert skileu.__doc__ == __doc__
 
 PACKAGE_DIR = (
-    pathlib.Path(str(importlib.resources.files(__package__)))
+    pathlib.Path(str(importlib.resources.files(__package__)))  # type: ignore
     if __package__ is not None
     else pathlib.Path(os.path.realpath(__file__)).parent
 )
@@ -41,12 +41,15 @@ class MaskedSprite:
         self.mask = pygame.mask.from_surface(sprite)
 
     def get_height(self) -> int:
+        """Return the height of the sprite."""
         return self.sprite.get_height()
 
     def get_width(self) -> int:
+        """Return the width of the sprite."""
         return self.sprite.get_width()
 
     def get_size(self) -> Tuple[int, int]:
+        """Return the size of the sprite."""
         return self.get_size()
 
 
@@ -57,6 +60,9 @@ class SkierSpriteSet:
     right: Final[MaskedSprite]
     forward: Final[MaskedSprite]
 
+    max_height: Final[int]
+    max_width: Final[int]
+
     def __init__(
         self, left: MaskedSprite, right: MaskedSprite, forward: MaskedSprite
     ) -> None:
@@ -65,7 +71,14 @@ class SkierSpriteSet:
         self.right = right
         self.forward = forward
 
-        self.masked_sprites = [left, right, forward]
+        max_width = 0
+        max_height = 0
+        for masked_sprite in [left, right, forward]:
+            max_width = max(max_width, masked_sprite.get_width())
+            max_height = max(max_height, masked_sprite.get_height())
+
+        self.max_width = max_width
+        self.max_height = max_height
 
 
 class ActorSpriteSet:
@@ -160,8 +173,6 @@ def cut_out_sprite_set(
     """Cut out a sprite set kept in a single image."""
     rows = sprite_set.get_height() // sprite_height
     columns = sprite_set.get_width() // sprite_width
-
-    sprite_size = (sprite_width, sprite_height)
 
     table = []  # type: List[List[pygame.surface.Surface]]
 
@@ -322,7 +333,7 @@ def calculate_bounding_box(
     """
     Compute the bounding box of an object.
 
-    In world coordinates. ``xy`` refers to the top-left world coordinates.
+    ``xy`` denotes the top-left corner, in screen coordinates.
     """
     return (
         xy[0],
@@ -338,50 +349,28 @@ def calculate_collision(
     other_bounding_box: Tuple[float, float, float, float],
     other_mask: pygame.mask.Mask,
 ) -> Optional[Tuple[float, float]]:
-    """
-    Calculate the position of the collision with another object, if any.
-
-    In world coordinates.
-    """
+    """Calculate the position of the collision with another object, if any."""
     if intersect(*bounding_box, *other_bounding_box):
-        # NOTE (mristin, 2023-03-05):
-        # World coordinates start in bottom-left corner. Screen coordinates start in
-        # top-left.
-        #
-        # The mask offsets need to be computed in the screen coordinates.
-        # See: https://www.pygame.org/docs/ref/mask.html#mask-offset-label
+        xmin = bounding_box[0]
+        ymin = bounding_box[1]
 
-        world_xmin = bounding_box[0]
-        world_ymax = bounding_box[3]
+        other_xmin = other_bounding_box[0]
+        other_ymin = other_bounding_box[1]
 
-        screen_xy = world_xy_to_screen_xy((world_xmin, world_ymax))
+        offset = (round(other_xmin - xmin), round(other_ymin - ymin))
 
-        other_world_xmin = other_bounding_box[0]
-        other_world_ymax = other_bounding_box[3]
-        other_screen_xy = world_xy_to_screen_xy((other_world_xmin, other_world_ymax))
+        collision_xy = mask.overlap(other_mask, offset)
 
-        offset = (
-            other_screen_xy[0] - screen_xy[0],
-            other_screen_xy[1] - screen_xy[1],
-        )
-
-        collision_screen_xy = mask.overlap(other_mask, offset)
-
-        if collision_screen_xy is not None:
-            # NOTE (mristin, 2023-03-05):
-            # We convert here screen to world coordinates.
-            return (
-                collision_screen_xy[0] + screen_xy[0],
-                SCENE_HEIGHT - (collision_screen_xy[1] + screen_xy[1]),
-            )
+        if collision_xy is not None:
+            return collision_xy[0] + xmin, collision_xy[1] + ymin
 
     return None
 
 
-class Collider:
+class ColliderProtocol(Protocol):
     """Represent a class of collider objects or actors."""
 
-    #: In world coordinates
+    #: Top-left corner in screen coordinates
     xy: Tuple[float, float]
 
     @abc.abstractmethod
@@ -390,16 +379,16 @@ class Collider:
         raise NotImplementedError()
 
 
-class Obstacle(Collider):
+class Obstacle(ColliderProtocol):
     """Represent a static obstacle in the level."""
 
     #: Appearance
     masked_sprite: Final[MaskedSprite]
 
-    #: Top-left corner, in world coordinates
-    xy: Final[Tuple[int, int]]
+    #: Top-left corner in screen coordinates
+    xy: Tuple[float, float]
 
-    def __init__(self, masked_sprite: MaskedSprite, xy: Tuple[int, int]) -> None:
+    def __init__(self, masked_sprite: MaskedSprite, xy: Tuple[float, float]) -> None:
         """Initialize with the given values."""
         self.masked_sprite = masked_sprite
         self.xy = xy
@@ -408,12 +397,13 @@ class Obstacle(Collider):
         return self.masked_sprite
 
 
-class Actor:
+class Actor(ColliderProtocol):
     """Represent a non-player character in the level."""
 
     #: Appearance
     sprite_set: Final[ActorSpriteSet]
 
+    #: Top-left corner in screen coordinates
     xy: Tuple[float, float]
 
     #: Always positive, or 0 if idling
@@ -428,7 +418,7 @@ class Actor:
     def __init__(
         self,
         sprite_set: ActorSpriteSet,
-        xy: Tuple[int, int],
+        xy: Tuple[float, float],
         velocity: float,
         direction: int,
         action_start: float,
@@ -473,22 +463,6 @@ class Level:
         self.actors = actors
 
 
-def calculate_skier_width(media: Media) -> int:
-    """Calculate the skier width based on the sprites."""
-    return max(
-        masked_sprite.get_width()
-        for masked_sprite in media.skier_sprite_set.masked_sprites
-    )
-
-
-def calculate_skier_height(media: Media) -> int:
-    """Calculate the skier width based on the sprites."""
-    return max(
-        masked_sprite.get_height()
-        for masked_sprite in media.skier_sprite_set.masked_sprites
-    )
-
-
 def generate_level(now: float, media: Media) -> Level:
     """Generate randomly a level."""
     obstacles = []  # type: List[Obstacle]
@@ -500,14 +474,10 @@ def generate_level(now: float, media: Media) -> Level:
     )
 
     # region Generate left margin
-    cursor = 0
+    cursor = 0.0
     while cursor < SCENE_HEIGHT:
         masked_sprite = random.choice(media.margin_sprites)
-        obstacles.append(
-            Obstacle(
-                masked_sprite=masked_sprite, xy=(0, cursor + masked_sprite.get_height())
-            )
-        )
+        obstacles.append(Obstacle(masked_sprite=masked_sprite, xy=(0, cursor)))
         cursor += masked_sprite.get_height()
     # endregion
 
@@ -518,10 +488,7 @@ def generate_level(now: float, media: Media) -> Level:
         obstacles.append(
             Obstacle(
                 masked_sprite=masked_sprite,
-                xy=(
-                    SCENE_WIDTH - masked_sprite.get_width(),
-                    cursor + masked_sprite.get_height(),
-                ),
+                xy=(SCENE_WIDTH - masked_sprite.get_width(), cursor),
             )
         )
         cursor += masked_sprite.get_height()
@@ -543,13 +510,19 @@ def generate_level(now: float, media: Media) -> Level:
     row_height = round(max_obstacle_and_actor_height * 2.3)
     padding = round((row_height - max_obstacle_and_actor_height) / 2)
 
-    skier_width = calculate_skier_width(media)
+    skier_width = media.skier_sprite_set.max_width
 
     margin_width = max(sprite.get_width() for sprite in media.margin_sprites)
 
     # Skp the first row so that the player can get prepared
-    cursor = 3 * calculate_skier_height(media)
-    while cursor < SCENE_HEIGHT - max_obstacle_and_actor_height:
+    clearance_line_at_start = (
+        SCENE_HEIGHT
+        - 3 * media.skier_sprite_set.max_height
+        - max_obstacle_and_actor_height
+    )
+
+    cursor = 0
+    while cursor < clearance_line_at_start:
         coin = random.random()
 
         if coin < 0.7:
@@ -566,8 +539,8 @@ def generate_level(now: float, media: Media) -> Level:
 
                 # Add some jitter to y to make the level more natural
                 y = min(
-                    SCENE_HEIGHT,
-                    cursor + obstacle_sprite.get_height() + random.randint(0, padding),
+                    clearance_line_at_start,
+                    cursor + random.randint(0, padding),
                 )
 
                 # We can not display this obstacle, so we are done for
@@ -585,8 +558,8 @@ def generate_level(now: float, media: Media) -> Level:
             actor_last_x = SCENE_WIDTH - margin_width - actor_sprite_set.max_width
 
             y = min(
-                SCENE_HEIGHT,
-                cursor + actor_sprite_set.max_height + random.randint(0, padding),
+                clearance_line_at_start,
+                cursor + random.randint(0, padding),
             )
 
             actor = Actor(
@@ -619,8 +592,8 @@ class SkierAction(enum.Enum):
 class Skier:
     """Capture the state of the skier."""
 
-    #: In world coordinates, center of the skier.
-    center_xy: Tuple[int, int]
+    #: Center of the skier in screen coordinates
+    center_xy: Tuple[float, float]
 
     action: SkierAction
 
@@ -629,7 +602,7 @@ class Skier:
 
     def __init__(
         self,
-        center_xy: Tuple[int, int],
+        center_xy: Tuple[float, float],
         action: SkierAction,
         skier_sprite_set: SkierSpriteSet,
     ) -> None:
@@ -653,10 +626,10 @@ class Skier:
 def calculate_xy_from_center(
     center_xy: Tuple[float, float], masked_sprite: MaskedSprite
 ) -> Tuple[float, float]:
-    """Calculate the top-left corner in world coordinates."""
+    """Calculate the top-left corner in screen coordinates."""
     return (
         center_xy[0] - masked_sprite.get_width() / 2,
-        center_xy[1] + masked_sprite.get_height() / 2,
+        center_xy[1] - masked_sprite.get_height() / 2,
     )
 
 
@@ -675,6 +648,8 @@ class GameOverOk(GameOver):
 
 
 class Collision:
+    """Capture a collision between a skier and something."""
+
     def __init__(
         self,
         skier_sprite: pygame.surface.Surface,
@@ -696,8 +671,10 @@ class Collision:
 
 
 class GameOverCrash(GameOver):
+    """Capture the game over upon collision between a skier and something."""
+
     #: Obstacle or actor that the skier had a collision with
-    collider: Collider
+    collider: ColliderProtocol
 
     collision: Collision
 
@@ -720,7 +697,7 @@ class State:
     now: float
 
     #: Set when the game finishes
-    game_over: Optional[GameOver]
+    game_over: Optional[Union[GameOverOk, GameOverCrash]]
 
     level_id: int
     level: Level
@@ -744,9 +721,9 @@ def initialize_state(
     state.level_id = 0
     state.level = level
 
-    skier_height = calculate_skier_height(media)
+    skier_height = media.skier_sprite_set.max_height
     state.skier = Skier(
-        center_xy=(round(SCENE_WIDTH / 2), -skier_height),
+        center_xy=(round(SCENE_WIDTH / 2), SCENE_HEIGHT - skier_height / 2),
         action=SkierAction.FORWARD,
         skier_sprite_set=media.skier_sprite_set,
     )
@@ -754,15 +731,13 @@ def initialize_state(
 
 LEVEL_COUNT = 5
 
-# TODO (mristin, 2023-03-7): undo
-# VELOCITY_FACTOR = 0.75
-VELOCITY_FACTOR = 0.01
+VELOCITY_FACTOR = 0.75
 
-#: Velocity in world coordinates depending on action, (x, y)
+#: Velocity in screen coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
-    SkierAction.FORWARD: (0, VELOCITY_FACTOR * 50),
-    SkierAction.LEFT: (-50, VELOCITY_FACTOR * 30),
-    SkierAction.RIGHT: (50, VELOCITY_FACTOR * 30),
+    SkierAction.FORWARD: (0, -VELOCITY_FACTOR * 50),
+    SkierAction.LEFT: (-50, -VELOCITY_FACTOR * 30),
+    SkierAction.RIGHT: (50, -VELOCITY_FACTOR * 30),
 }
 assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 
@@ -810,15 +785,18 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
     # endregion
 
     # region Check for reaching the end of level
-    if skier_xy[1] >= SCENE_HEIGHT:
+    if skier_xy[1] <= 0:
         if state.level_id == LEVEL_COUNT - 1:
             state.game_over = GameOverOk(now)
         else:
             state.level_id += 1
             state.level = generate_level(now=state.now, media=media)
 
-            skier_height = calculate_skier_height(media)
-            state.skier.center_xy = (state.skier.center_xy[0], -skier_height)
+            skier_height = state.skier.skier_sprite_set.max_height
+            state.skier.center_xy = (
+                state.skier.center_xy[0],
+                SCENE_HEIGHT - skier_height / 2,
+            )
 
         return
     # endregion
@@ -861,14 +839,6 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
 
     # endregion
 
-    # TODO (mristin, 2023-03-7): implement update of the actors
-    # TODO (mristin, 2023-03-5): action_start — timestamp when the action started
-    # TODO (mristin, 2023-03-5): velocity: float 🠒 < 0 left, > 0 right, 0 idle
-    # TODO (mristin, 2023-03-5): action_eta — action_start + random(2, 3) seconds
-    # TODO (mristin, 2023-03-5):   pick random direction or idle 1/3, 1/3, 1/3,
-    # TODO (mristin, 2023-03-5):   if too close to boundary: pick only idle or move to other direction
-    # TODO (mristin, 2023-03-5): if would hit the boundary, go to idle, next_action = now
-
 
 def cvmat_to_surface(image: cv2.Mat) -> pygame.surface.Surface:
     """Convert from OpenCV to pygame."""
@@ -886,7 +856,7 @@ def action_from_detection(
     """
     Infer the action based on the body pose detection.
 
-    Return the action and the sprite showing it.
+    Return the action and the camera frame with the body wire illustrating it.
     """
     frame_height, frame_width, _ = frame.shape
 
@@ -953,24 +923,17 @@ def action_from_detection(
     return action, cvmat_to_surface(frame_with_wire)
 
 
-def world_xy_to_screen_xy(xy: Tuple[float, float]) -> Tuple[int, int]:
-    """Convert the world coordinates to screen coordinates, as (x,y)."""
-    return round(xy[0]), round(SCENE_HEIGHT - xy[1])
-
-
 def draw_obstacle_on_scene(scene: pygame.surface.Surface, obstacle: Obstacle) -> None:
     """Draw the obstacle on the scene."""
-    screen_xy = world_xy_to_screen_xy(obstacle.xy)
-    scene.blit(obstacle.masked_sprite.sprite, screen_xy)
+    scene.blit(obstacle.masked_sprite.sprite, obstacle.xy)
 
 
 def draw_skier_on_scene(scene: pygame.surface.Surface, skier: Skier) -> None:
     """Draw the skier on the scene."""
     masked_sprite = skier.determine_masked_sprite()
     xy = calculate_xy_from_center(skier.center_xy, masked_sprite)
-    screen_xy = world_xy_to_screen_xy(xy)
 
-    scene.blit(masked_sprite.sprite, screen_xy)
+    scene.blit(masked_sprite.sprite, xy)
 
 
 def draw_actor_on_scene(
@@ -978,9 +941,8 @@ def draw_actor_on_scene(
 ) -> None:
     """Draw the actor on the scene."""
     masked_sprite = actor.determine_masked_sprite(now)
-    screen_xy = world_xy_to_screen_xy(actor.xy)
 
-    scene.blit(masked_sprite.sprite, screen_xy)
+    scene.blit(masked_sprite.sprite, actor.xy)
 
 
 @require(lambda state: state.game_over is None)
@@ -1058,17 +1020,15 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
 
         scene.blit(
             state.game_over.collision.skier_sprite,
-            world_xy_to_screen_xy(state.game_over.collision.skier_xy),
+            state.game_over.collision.skier_xy,
         )
 
         scene.blit(
             state.game_over.collision.collider_sprite,
-            world_xy_to_screen_xy(state.game_over.collision.collider_xy),
+            state.game_over.collision.collider_xy,
         )
 
-        pygame.draw.circle(
-            scene, (255, 0, 0), world_xy_to_screen_xy(state.game_over.collision.xy), 5
-        )
+        pygame.draw.circle(scene, (255, 0, 0), state.game_over.collision.xy, 5)
     else:
         common.assert_never(state.game_over)
 

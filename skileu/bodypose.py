@@ -84,6 +84,19 @@ class Detection:
         self.score = score
 
 
+def load_empty_detector() -> Callable[[cv2.Mat], List[Detection]]:
+    """
+    Create a detector that always returns an empty result.
+
+    This is used for debugging.
+    """
+
+    def apply_model(img: cv2.Mat) -> List[Detection]:
+        return []
+
+    return apply_model
+
+
 def load_detector() -> Callable[[cv2.Mat], List[Detection]]:
     """
     Load the model and return the function which you can readily use on images.
