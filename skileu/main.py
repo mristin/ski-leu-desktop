@@ -645,16 +645,20 @@ class Skier:
     #: Possible appearance
     skier_sprite_set: Final[SkierSpriteSet]
 
+    velocity_factor: float
+
     def __init__(
         self,
         center_xy: Tuple[float, float],
         action: SkierAction,
         skier_sprite_set: SkierSpriteSet,
+        velocity_factor: float
     ) -> None:
         """Initialize with the given values."""
         self.center_xy = center_xy
         self.action = action
         self.skier_sprite_set = skier_sprite_set
+        self.velocity_factor = velocity_factor
 
     def determine_masked_sprite(self) -> MaskedSprite:
         """Determine the sprite of the skier."""
@@ -782,18 +786,20 @@ def initialize_state(
         center_xy=(round(SCENE_WIDTH / 2), SCENE_HEIGHT - skier_height / 2),
         action=SkierAction.FORWARD,
         skier_sprite_set=media.skier_sprite_set,
+        velocity_factor=1.0
     )
 
 
 LEVEL_COUNT = 5
 
-VELOCITY_FACTOR = 0.75
+#: Allow for global ad-hoc tweaks in case some players are too slow
+GLOBAL_VELOCITY_FACTOR = 0.75
 
 #: Velocity in screen coordinates depending on action, (x, y)
 VELOCITY_DISPATCH = {
-    SkierAction.FORWARD: (0, -VELOCITY_FACTOR * 50),
-    SkierAction.LEFT: (-50, -VELOCITY_FACTOR * 30),
-    SkierAction.RIGHT: (50, -VELOCITY_FACTOR * 30),
+    SkierAction.FORWARD: (0, -GLOBAL_VELOCITY_FACTOR * 50),
+    SkierAction.LEFT: (-50, -GLOBAL_VELOCITY_FACTOR * 30),
+    SkierAction.RIGHT: (50, -GLOBAL_VELOCITY_FACTOR * 30),
 }
 assert all(action in VELOCITY_DISPATCH for action in SkierAction)
 
@@ -867,8 +873,10 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
     velocity = VELOCITY_DISPATCH[state.skier.action]
 
     state.skier.center_xy = (
-        state.skier.center_xy[0] + velocity[0] * time_delta,
-        state.skier.center_xy[1] + velocity[1] * time_delta,
+        state.skier.center_xy[0]
+        + state.skier.velocity_factor * velocity[0] * time_delta,
+        state.skier.center_xy[1]
+        + state.skier.velocity_factor * velocity[1] * time_delta,
     )
     # endregion
 
@@ -912,13 +920,14 @@ def cvmat_to_surface(image: cv2.Mat) -> pygame.surface.Surface:
     return pygame.image.frombuffer(image_rgb.tobytes(), (width, height), "RGB")
 
 
-def action_from_detection(
+def recognize_action_from_detection(
     detection: bodypose.Detection, frame: cv2.Mat
-) -> Tuple[Optional[SkierAction], pygame.surface.Surface]:
+) -> Tuple[Optional[SkierAction], float, pygame.surface.Surface]:
     """
     Infer the action based on the body pose detection.
 
-    Return the action and the camera frame with the body wire illustrating it.
+    Return (action, velocity factor) and the camera frame with the body wire
+    illustrating it.
     """
     frame_height, frame_width, _ = frame.shape
 
@@ -934,6 +943,14 @@ def action_from_detection(
 
     right_ankle = detection.keypoints.get(
         skileu.bodypose.KeypointLabel.RIGHT_ANKLE, None
+    )
+
+    left_wrist = detection.keypoints.get(
+        skileu.bodypose.KeypointLabel.LEFT_WRIST, None
+    )
+
+    right_wrist = detection.keypoints.get(
+        skileu.bodypose.KeypointLabel.RIGHT_WRIST, None
     )
 
     frame_with_wire = frame.copy()
@@ -982,7 +999,45 @@ def action_from_detection(
             if abs(angle) < 150:
                 action = SkierAction.RIGHT if angle < 0 else SkierAction.LEFT
 
-    return action, cvmat_to_surface(frame_with_wire)
+    velocity_factor = 1.0
+    if (
+        left_wrist is not None
+        and right_wrist is not None
+        and left_knee is not None
+        and right_knee is not None
+        and left_ankle is not None
+        and right_ankle is not None
+    ):
+        knee = (
+            round(frame_width * (left_knee.x + right_knee.x) / 2.0),
+            round(frame_height * (left_knee.y + right_knee.y) / 2.0),
+        )
+
+        ankle = (
+            round(frame_width * (left_ankle.x + right_ankle.x) / 2.0),
+            round(frame_height * (left_ankle.y + right_ankle.y) / 2.0),
+        )
+
+        wrist = (
+            round(frame_width * (left_wrist.x + right_wrist.x) / 2.0),
+            round(frame_height * (left_wrist.y + right_wrist.y) / 2.0),
+        )
+
+        cv2.circle(frame_with_wire, wrist, 20, (255, 255, 0), -1)
+
+        ratio = min(
+            1.0,
+            max(
+                0.0,
+                (ankle[1] - wrist[1]) / (ankle[1] - knee[1])
+            )
+        )
+
+        # NOTE (mristin, 2023-03-08):
+        # This is an arbitrary equation that seemed to work well in the game play.
+        velocity_factor = (2.0 - ratio) ** 1.7
+
+    return action, velocity_factor, cvmat_to_surface(frame_with_wire)
 
 
 def draw_obstacle_on_scene(scene: pygame.surface.Surface, obstacle: Obstacle) -> None:
@@ -1066,6 +1121,14 @@ def render_game_over(state: State, media: Media) -> pygame.surface.Surface:
             scene,
             (20, 60),
             f"Average velocity: {average_velocity:.1f} pixels / second",
+            (0, 0, 0),
+            size=16,
+        )
+
+        media.font.render_to(
+            scene,
+            (20, 80),
+            f"Total time: {time_delta:.1f} seconds",
             (0, 0, 0),
             size=16,
         )
@@ -1250,9 +1313,15 @@ def main(prog: str) -> int:
             frame_with_wire = None  # type: Optional[pygame.surface.Surface]
             if len(detections) > 0:
                 detection = detections[0]
-                maybe_action, frame_with_wire = action_from_detection(detection, frame)
+                # fmt: on
+                maybe_action, velocity_factor, frame_with_wire = (
+                    recognize_action_from_detection(detection, frame)
+                )
+                # fmt: off
                 if maybe_action is not None:
                     state.skier.action = maybe_action
+
+                state.skier.velocity_factor = velocity_factor
 
             if frame_with_wire is None:
                 frame_with_wire = cvmat_to_surface(frame)
