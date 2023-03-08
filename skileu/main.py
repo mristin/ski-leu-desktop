@@ -166,6 +166,7 @@ class Media:
         margin_sprites: List[MaskedSprite],
         actor_sprite_sets: List[ActorSpriteSet],
         font: pygame.freetype.Font,  # type: ignore
+        success_music_path: pathlib.Path
     ) -> None:
         """Initialize with the given values."""
         self.skier_sprite_set = skier_sprite_set
@@ -177,6 +178,7 @@ class Media:
         ]
         self.actor_sprite_sets = actor_sprite_sets
         self.font = font
+        self.success_music_path = success_music_path
 
 
 SCENE_WIDTH = 800
@@ -320,6 +322,10 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
     except Exception as exception:
         return None, f"Failed to load {pth}: {exception}"
 
+    success_music_path = PACKAGE_DIR / "media/music/success.mid"
+    if not pth.exists():
+        return None, f"File does not exist: {success_music_path}"
+
     return (
         Media(
             SkierSpriteSet(
@@ -337,6 +343,7 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
             margin_sprites=[MaskedSprite(sprite) for sprite in margin_sprites],
             actor_sprite_sets=actor_sprite_sets,
             font=font,
+            success_music_path=success_music_path
         ),
         None,
     )
@@ -1225,6 +1232,8 @@ def main(prog: str) -> int:
         level = generate_level(now=now, media=media)
         state = State(game_start=now, media=media, level=level)
 
+        prev_game_over = None  # type: Optional[GameOver]
+
         print("Entering the endless loop...")
         while cap.isOpened() and not state.received_quit:
             now = pygame.time.get_ticks() / 1000
@@ -1269,6 +1278,7 @@ def main(prog: str) -> int:
                         media=media,
                         level=level,
                     )
+                    pygame.mixer.music.stop()
                     continue
 
                 else:
@@ -1285,6 +1295,16 @@ def main(prog: str) -> int:
                 scene = render_in_game(state, media, frame_with_wire)
                 resize_image_to_canvas_and_blit(scene, surface)
                 pygame.display.flip()
+
+            if (
+                    state.game_over is not None
+                    and prev_game_over is None
+                    and isinstance(state.game_over, GameOverOk)
+            ):
+                pygame.mixer.music.load(str(media.success_music_path))
+                pygame.mixer.music.play()
+
+            prev_game_over = state.game_over
 
             # Enforce 30 frames per second
             clock.tick(30)
