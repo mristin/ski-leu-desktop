@@ -68,12 +68,12 @@ def main() -> int:
                 )
 
                 if (
-                        left_knee is not None
-                        and right_knee is not None
-                        and left_ankle is not None
-                        and right_ankle is not None
-                        and left_wrist is not None
-                        and right_wrist is not None
+                    left_knee is not None
+                    and right_knee is not None
+                    and left_ankle is not None
+                    and right_ankle is not None
+                    and left_wrist is not None
+                    and right_wrist is not None
                 ):
                     knee = (
                         round(frame_width * (left_knee.x + right_knee.x) / 2.0),
@@ -99,11 +99,7 @@ def main() -> int:
                     # NOTE (mristin, 2023-03-08):
                     # The screen coordinates start in the top-left corner.
                     ratio = min(
-                        1.0,
-                        max(
-                            0.0,
-                            (ankle[1] - wrist[1]) / (ankle[1] - knee[1])
-                        )
+                        1.0, max(0.0, (ankle[1] - wrist[1]) / (ankle[1] - knee[1]))
                     )
 
                     # NOTE (mristin, 2023-03-08):

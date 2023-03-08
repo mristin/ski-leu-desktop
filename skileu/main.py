@@ -166,7 +166,7 @@ class Media:
         margin_sprites: List[MaskedSprite],
         actor_sprite_sets: List[ActorSpriteSet],
         font: pygame.freetype.Font,  # type: ignore
-        success_music_path: pathlib.Path
+        success_music_path: pathlib.Path,
     ) -> None:
         """Initialize with the given values."""
         self.skier_sprite_set = skier_sprite_set
@@ -333,17 +333,15 @@ def load_media() -> Tuple[Optional[Media], Optional[str]]:
                 right=MaskedSprite(skier_right_sprite),
                 forward=MaskedSprite(skier_forward_sprite),
             ),
-            obstacle_sprites=[
-                MaskedSprite(sprite)
-                for sprite in obstacle_sprites
-            ] + [
+            obstacle_sprites=[MaskedSprite(sprite) for sprite in obstacle_sprites]
+            + [
                 MaskedSprite(pygame.transform.flip(sprite, True, False))
                 for sprite in obstacle_sprites
             ],
             margin_sprites=[MaskedSprite(sprite) for sprite in margin_sprites],
             actor_sprite_sets=actor_sprite_sets,
             font=font,
-            success_music_path=success_music_path
+            success_music_path=success_music_path,
         ),
         None,
     )
@@ -652,7 +650,7 @@ class Skier:
         center_xy: Tuple[float, float],
         action: SkierAction,
         skier_sprite_set: SkierSpriteSet,
-        velocity_factor: float
+        velocity_factor: float,
     ) -> None:
         """Initialize with the given values."""
         self.center_xy = center_xy
@@ -786,7 +784,7 @@ def initialize_state(
         center_xy=(round(SCENE_WIDTH / 2), SCENE_HEIGHT - skier_height / 2),
         action=SkierAction.FORWARD,
         skier_sprite_set=media.skier_sprite_set,
-        velocity_factor=1.0
+        velocity_factor=1.0,
     )
 
 
@@ -945,9 +943,7 @@ def recognize_action_from_detection(
         skileu.bodypose.KeypointLabel.RIGHT_ANKLE, None
     )
 
-    left_wrist = detection.keypoints.get(
-        skileu.bodypose.KeypointLabel.LEFT_WRIST, None
-    )
+    left_wrist = detection.keypoints.get(skileu.bodypose.KeypointLabel.LEFT_WRIST, None)
 
     right_wrist = detection.keypoints.get(
         skileu.bodypose.KeypointLabel.RIGHT_WRIST, None
@@ -1025,13 +1021,7 @@ def recognize_action_from_detection(
 
         cv2.circle(frame_with_wire, wrist, 20, (255, 255, 0), -1)
 
-        ratio = min(
-            1.0,
-            max(
-                0.0,
-                (ankle[1] - wrist[1]) / (ankle[1] - knee[1])
-            )
-        )
+        ratio = min(1.0, max(0.0, (ankle[1] - wrist[1]) / (ankle[1] - knee[1])))
 
         # NOTE (mristin, 2023-03-08):
         # This is an arbitrary equation that seemed to work well in the game play.
@@ -1077,6 +1067,16 @@ def render_in_game(
         draw_actor_on_scene(scene, actor, state.now)
 
     draw_skier_on_scene(scene, state.skier)
+
+    fog = pygame.surface.Surface((SCENE_WIDTH, SCENE_HEIGHT)).convert_alpha()
+    fog.fill((255, 255, 255, 220))
+
+    pygame.draw.circle(fog, (255, 255, 255, 150), state.skier.center_xy, 160, width=10)
+    pygame.draw.circle(fog, (255, 255, 255, 100), state.skier.center_xy, 150, width=10)
+    pygame.draw.circle(fog, (255, 255, 255, 50), state.skier.center_xy, 140, width=10)
+    pygame.draw.circle(fog, (255, 255, 255, 25), state.skier.center_xy, 130, width=10)
+    pygame.draw.circle(fog, (0, 0, 0, 0), state.skier.center_xy, 130)
+    scene.blit(fog, (0, 0))
 
     frame_with_wire_resized = pygame.surface.Surface((120, 120))
     resize_image_to_canvas_and_blit(frame_with_wire, frame_with_wire_resized)
@@ -1278,7 +1278,8 @@ def main(prog: str) -> int:
     pygame.display.flip()
 
     print("Loading the detector...")
-    detector = bodypose.load_detector()
+    # detector = bodypose.load_detector()
+    detector = bodypose.load_empty_detector()
 
     clock = pygame.time.Clock()
 
@@ -1314,9 +1315,11 @@ def main(prog: str) -> int:
             if len(detections) > 0:
                 detection = detections[0]
                 # fmt: on
-                maybe_action, velocity_factor, frame_with_wire = (
-                    recognize_action_from_detection(detection, frame)
-                )
+                (
+                    maybe_action,
+                    velocity_factor,
+                    frame_with_wire,
+                ) = recognize_action_from_detection(detection, frame)
                 # fmt: off
                 if maybe_action is not None:
                     state.skier.action = maybe_action
@@ -1366,9 +1369,9 @@ def main(prog: str) -> int:
                 pygame.display.flip()
 
             if (
-                    state.game_over is not None
-                    and prev_game_over is None
-                    and isinstance(state.game_over, GameOverOk)
+                state.game_over is not None
+                and prev_game_over is None
+                and isinstance(state.game_over, GameOverOk)
             ):
                 pygame.mixer.music.load(str(media.success_music_path))
                 pygame.mixer.music.play()
