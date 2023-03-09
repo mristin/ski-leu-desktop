@@ -1021,7 +1021,11 @@ def recognize_action_from_detection(
 
         cv2.circle(frame_with_wire, wrist, 20, (255, 255, 0), -1)
 
-        ratio = min(1.0, max(0.0, (ankle[1] - wrist[1]) / (ankle[1] - knee[1])))
+        total = (ankle[1] - knee[1])
+        if total == 0:
+            ratio = 0
+        else:
+            ratio = min(1.0, max(0.0, (ankle[1] - wrist[1]) / total))
 
         # NOTE (mristin, 2023-03-08):
         # This is an arbitrary equation that seemed to work well in the game play.
