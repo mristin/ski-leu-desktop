@@ -1051,7 +1051,7 @@ def recognize_action_from_detection(
 
         total = ankle[1] - knee[1]
         if total == 0:
-            ratio = 0
+            ratio = 0.0
         else:
             ratio = min(1.0, max(0.0, (ankle[1] - wrist[1]) / total))
 
