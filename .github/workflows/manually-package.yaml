@@ -1,4 +1,4 @@
-name: release-package
+name: manually-package
 
 on: workflow_dispatch
   
