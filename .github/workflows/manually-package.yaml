@@ -1,0 +1,39 @@
+name: release-package
+
+on: workflow_dispatch
+  
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        lfs: 'true'
+
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+        architecture: 'x64'
+
+    - name: Install dependencies
+      run: pip3 install -e .[dev]
+
+    - name: Infer the version from the main module
+      id: inferVersion
+      run: |
+        $version = $(python -c 'import skileu; print(skileu.__version__)').Trim()
+        Write-Output "::set-output name=version::$version"
+
+    - name: Package the release
+      run: |
+        pyinstaller.exe .\skileu\main.py --name ski-leu --add-data "skileu;."
+        cd dist
+        Compress-Archive -Path ski-leu ski-leu.${{ steps.inferVersion.outputs.version }}.win-x64.zip
+
+    - name: Upload the package
+      uses: actions/upload-artifact@v3
+      with:
+        name: ski-leu.${{ steps.inferVersion.outputs.version }}.win-x64.zip
+        path: dist/ski-leu.${{ steps.inferVersion.outputs.version }}.win-x64.zip
