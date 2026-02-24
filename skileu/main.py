@@ -936,7 +936,7 @@ def update_state_on_tick(state: State, now: float, media: Media) -> None:
     # endregion
 
 
-def cvmat_to_surface(image: cv2.Mat) -> pygame.surface.Surface:
+def cvmat_to_surface(image: cv2.typing.MatLike) -> pygame.surface.Surface:
     """Convert from OpenCV to pygame."""
     height, width, _ = image.shape
     if height == 0 and width == 0:
@@ -947,7 +947,7 @@ def cvmat_to_surface(image: cv2.Mat) -> pygame.surface.Surface:
 
 
 def recognize_action_from_detection(
-    detection: bodypose.Detection, frame: cv2.Mat
+    detection: bodypose.Detection, frame: cv2.typing.MatLike
 ) -> Tuple[Optional[SkierAction], float, pygame.surface.Surface]:
     """
     Infer the action based on the body pose detection.
@@ -1313,7 +1313,9 @@ def main(prog: str) -> int:
     pygame.display.flip()
 
     print("Loading the detector...")
-    detector = bodypose.load_detector()
+    detector = bodypose.load_detector(
+        PACKAGE_DIR / "media" / "models" / "312f001449331ee3d410d758fccdc9945a65dbc3"
+    )
 
     clock = pygame.time.Clock()
 

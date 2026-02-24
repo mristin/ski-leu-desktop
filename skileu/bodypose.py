@@ -3,7 +3,9 @@
 import collections
 import enum
 import math
-from typing import List, Final, Mapping, Callable, MutableMapping, Tuple
+import os
+import pathlib
+from typing import List, Final, Mapping, Callable, MutableMapping, Tuple, Any
 
 import cv2
 import numpy as np
@@ -84,26 +86,67 @@ class Detection:
         self.score = score
 
 
-def load_empty_detector() -> Callable[[cv2.Mat], List[Detection]]:
+def load_empty_detector() -> Callable[[cv2.typing.MatLike], List[Detection]]:
     """
     Create a detector that always returns an empty result.
 
     This is used for debugging.
     """
 
-    def apply_model(img: cv2.Mat) -> List[Detection]:
+    def apply_model(img: cv2.typing.MatLike) -> List[Detection]:
         return []
 
     return apply_model
 
 
-def load_detector() -> Callable[[cv2.Mat], List[Detection]]:
+# noinspection SpellCheckingInspection
+def _load_tf_model(path: pathlib.Path) -> Any:
+    """
+    Load the TF model from disk.
+
+    This function is an adaption of ``tensorflow_hub.load(.)``
+    """
+    module_path = str(path)
+
+    is_hub_module_v1 = tf.io.gfile.exists(
+        hub.native_module.get_module_proto_path(module_path)
+    )
+
+    saved_model_path = os.path.join(
+        tf.compat.as_bytes(module_path),
+        tf.compat.as_bytes(tf.saved_model.SAVED_MODEL_FILENAME_PB),
+    )
+    saved_model_pbtxt_path = os.path.join(
+        tf.compat.as_bytes(module_path),
+        tf.compat.as_bytes(tf.saved_model.SAVED_MODEL_FILENAME_PBTXT),
+    )
+    if not tf.io.gfile.exists(saved_model_path) and not tf.io.gfile.exists(
+        saved_model_pbtxt_path
+    ):
+        raise ValueError(
+            f"Trying to load a model of incompatible/unknown type. "
+            f"{module_path} contains neither {tf.saved_model.SAVED_MODEL_FILENAME_PB} "
+            f"nor {tf.saved_model.SAVED_MODEL_FILENAME_PBTXT}."
+        )
+
+    obj = tf.compat.v1.saved_model.load_v2(module_path)
+    obj._is_hub_module_v1 = is_hub_module_v1  # pylint: disable=protected-access
+    return obj
+
+
+Detector = Callable[[cv2.typing.MatLike], List[Detection]]
+
+
+@require(lambda path: path.exists() and path.is_dir())
+def load_detector(path: pathlib.Path) -> Detector:
     """
     Load the model and return the function which you can readily use on images.
 
+    :param path: to the model directory
     :return: detector function to be applied on images
     """
-    model = hub.load("https://tfhub.dev/google/movenet/multipose/lightning/1")
+    model = _load_tf_model(path)
+
     movenet = model.signatures["serving_default"]
 
     # If a detection has a score below this threshold, it will be ignored.
@@ -112,7 +155,7 @@ def load_detector() -> Callable[[cv2.Mat], List[Detection]]:
     # If a keypoint has a confidence below this threshold, it will be ignored.
     keypoint_confidence_threshold = 0.2
 
-    def apply_model(img: cv2.Mat) -> List[Detection]:
+    def apply_model(img: cv2.typing.MatLike) -> List[Detection]:
         # NOTE (mristin, 2023-02-26):
         # Vaguely based on:
         # * https://www.tensorflow.org/hub/tutorials/movenet,

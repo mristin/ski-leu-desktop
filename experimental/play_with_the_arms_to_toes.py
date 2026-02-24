@@ -2,6 +2,8 @@
 
 import argparse
 import math
+import os.path
+import pathlib
 import sys
 from typing import Tuple, Optional
 
@@ -16,7 +18,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.parse_args()
 
-    detector = skileu.bodypose.load_detector()
+    model_path = pathlib.Path(os.path.realpath(__file__)).parent.parent / "tfhub-model"
+
+    detector = skileu.bodypose.load_detector(path=model_path)
 
     cap = cv2.VideoCapture(0)
 

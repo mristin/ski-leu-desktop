@@ -42,7 +42,7 @@ setup(
     extras_require={
         "dev": [
             "black==22.12.0",
-            "mypy==0.991",
+            "mypy==1.19.1",
             "pylint==2.15.8",
             "coverage>=6.5.0,<7",
             "twine",
